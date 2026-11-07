@@ -47,10 +47,6 @@ watch your clipboard behind your back.
 - Profile pictures and anything you publish are public. Don’t upload or share
   anything you wouldn’t want others to see.
 
-## Credits
-
-Logo credit: @metanokia
-
 ## Running Clipcanva from source
 
 Clipcanva is a static HTML, CSS, and JavaScript app. To run it locally, serve
