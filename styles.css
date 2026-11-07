@@ -488,8 +488,11 @@ select.pill {
   inset: 0;
 }
 .bi {
-  background-size: cover;
-  background-position: center;
+  width: 100%;
+  height: 100%;
+  background: #0d0d10;
+  object-fit: cover;
+  pointer-events: none;
 }
 .bl {
   display: grid;
@@ -685,6 +688,73 @@ select.pill {
   width: 100%;
   border-radius: 12px;
   margin-bottom: 12px;
+}
+.profile-photo-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 18px 0;
+}
+.profile-photo-row > img,
+.profile-photo-row > span {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.profile-photo-row > span {
+  display: grid;
+  place-items: center;
+  background: #27272a;
+  font-size: 24px;
+  font-weight: 700;
+}
+.profile-photo-row > div {
+  min-width: 0;
+  flex: 1;
+}
+.profile-photo-row small {
+  display: block;
+  margin: 6px 0;
+  color: var(--mu);
+}
+.profile-photo-row .btn {
+  padding: 0 10px;
+}
+#profile-crop-wrap {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 0 18px;
+}
+#profile-crop-preview {
+  grid-row: span 3;
+  width: 112px;
+  height: 112px;
+  border-radius: 12px;
+  background: #09090b;
+  cursor: grab;
+  touch-action: none;
+}
+#profile-crop-preview:active {
+  cursor: grabbing;
+}
+.dlg #profile-crop-wrap label {
+  align-self: end;
+  margin: 0;
+}
+.dlg #profile-photo-zoom {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  accent-color: #f4f4f5;
+}
+#profile-crop-wrap small {
+  align-self: start;
+  color: var(--mu);
+  font-size: 11px;
 }
 .acts {
   display: grid;

@@ -20,8 +20,8 @@ Open [http://localhost:8000/auth.html](http://localhost:8000/auth.html).
 2. From the project root, run `supabase login`, then `supabase init` and
    `supabase link --project-ref ldnjjoocmiyjeadsljxt`. CLI linking may prompt
    for the database password; enter it only in the CLI prompt.
-3. Apply all five checked-in migrations with `supabase db push`. In the Supabase SQL
-   Editor, run the files in timestamp order:
+3. Apply all six checked-in migrations with `supabase db push`. In the Supabase
+   SQL Editor, run the files in timestamp order:
    [private workspace and storage](./supabase/migrations/20261107173000_create_clipcanva_cloud.sql),
    then
    [profiles, publishing, and collaboration](./supabase/migrations/20261107190000_add_profiles_sharing_and_collaboration.sql),
@@ -30,7 +30,9 @@ Open [http://localhost:8000/auth.html](http://localhost:8000/auth.html).
    then
    [profile activity](./supabase/migrations/20261107204000_restore_profile_activity.sql),
    then
-   [username uniqueness](./supabase/migrations/20261107204500_add_case_insensitive_profile_username_uniqueness.sql).
+   [username uniqueness](./supabase/migrations/20261107204500_add_case_insensitive_profile_username_uniqueness.sql),
+   then
+   [public profile photos](./supabase/migrations/20261107205000_add_public_profile_photos.sql).
 4. In Supabase **Authentication → URL Configuration**, set the site URL to
    `http://localhost:8000` and add `http://localhost:8000/**` to the redirect
    URL allow list. Set these to the production HTTPS domain when deploying.
@@ -49,10 +51,14 @@ file or commit one to the repository.**
   security policies. Users can access only their own row.
 - Images and screenshots are stored in the private `clipcanva-assets` bucket.
   The app requests temporary signed URLs for viewing them.
-- Public profiles expose only a username and display name; account email is
-  never included in public profile queries. Profiles are discoverable by
-  username. Usernames are unique regardless of capitalization, and the profile
-  editor tells you if a username is already taken.
+- Public profiles expose a username, display name, and optional profile
+  picture; account email is never included in public profile queries. Profiles
+  are discoverable by username. Usernames are unique regardless of
+  capitalization, and the profile editor tells you if a username is already
+  taken.
+- Profile pictures are optional public images. The editor accepts PNG, JPG, or
+  WebP files up to 3 MB, lets users drag and zoom to frame a square crop, and
+  lets them remove their picture.
 - New accounts start with a blank canvas and no collections. Create a
   collection when you want to organize objects; new objects remain ungrouped
   unless a collection is selected.
@@ -87,7 +93,7 @@ file or commit one to the repository.**
 - `auth.html`, `auth.css`, `auth.js` — Supabase sign-up, login, and password reset
 - `supabase-config.js`, `supabase-client.js` — public client configuration
 - `supabase/migrations/` — workspace, sharing, collection publishing, social
-  features, profile activity, storage buckets, and RLS
+  features, profile activity, profile photos, storage buckets, and RLS
 - `USER-TESTING.md` — guide for first user sessions
 
 ## Publishing

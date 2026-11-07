@@ -95,19 +95,26 @@ async function loadCanvas() {
     if (error) throw error;
     if (!project) throw new Error("This project is private or unavailable.");
     const items = project.data.items;
-    for (const item of items) {
-      if (item.type !== "image" || !item.storagePath) continue;
-      const { data, error: imageError } = await supabase.storage
-        .from("clipcanva-assets")
-        .createSignedUrl(item.storagePath, 10 * 60);
-      if (imageError) throw imageError;
-      item.src = data.signedUrl;
-    }
-    const { data: profile, error: profileError } = await supabase
+    const profileRequest = supabase
       .from("clipcanva_profiles")
       .select("username")
       .eq("user_id", project.owner_id)
       .maybeSingle();
+    const imageItems = items.filter(
+      (item) => item.type === "image" && item.storagePath,
+    );
+    for (let index = 0; index < imageItems.length; index += 6) {
+      await Promise.all(
+        imageItems.slice(index, index + 6).map(async (item) => {
+          const { data, error: imageError } = await supabase.storage
+            .from("clipcanva-assets")
+            .createSignedUrl(item.storagePath, 10 * 60);
+          if (imageError) throw imageError;
+          item.src = data.signedUrl;
+        }),
+      );
+    }
+    const { data: profile, error: profileError } = await profileRequest;
     if (profileError) throw profileError;
     document.title = `${project.name} — Clipcanva`;
     $("#title").textContent = project.name;

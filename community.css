@@ -180,6 +180,59 @@ button:disabled {
   font-weight: 700;
 }
 
+img.avatar {
+  object-fit: cover;
+}
+
+.avatar-image {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+}
+
+.avatar-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-image > span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.avatar-image > span[hidden] {
+  display: none;
+}
+
+.profile-avatar {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  flex: none;
+  border-radius: 50%;
+  background: #27272a;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.relation-profile {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  vertical-align: middle;
+}
+
+.relation-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 12px;
+}
+
 .creator-info {
   min-width: 0;
   flex: 1;
@@ -242,6 +295,10 @@ button:disabled {
   display: grid;
   gap: 20px;
   margin: 28px 0;
+}
+
+.profile-panel[hidden] {
+  display: none;
 }
 
 .profile-social,

@@ -218,10 +218,23 @@ if (sessionError || !sessionData.session) {
         : `state:${SESSION.id}`;
     },
   };
-  let st;
+  let st, viewSaveTimer;
+  const scheduleViewSave = () => {
+    clearTimeout(viewSaveTimer);
+    viewSaveTimer = setTimeout(async () => {
+      viewSaveTimer = null;
+      try {
+        await DB.set(S);
+      } catch (error) {
+        toast(`Canvas view could not be saved locally: ${error.message}`);
+      }
+    }, 700);
+  };
   const save = () => {
     if (suppressSave) return;
     clearTimeout(st);
+    clearTimeout(viewSaveTimer);
+    viewSaveTimer = null;
     const version = ++saveVersion;
     saved = cloudUnavailable ? "fail" : "pending";
     rS();
@@ -231,6 +244,9 @@ if (sessionError || !sessionData.session) {
       return;
     }
     st = setTimeout(async () => {
+      st = null;
+      clearTimeout(viewSaveTimer);
+      viewSaveTimer = null;
       const snapshot = JSON.parse(JSON.stringify(S));
       try {
         await DB.set(snapshot);
@@ -412,19 +428,27 @@ if (sessionError || !sessionData.session) {
       throw new Error("The saved cloud workspace has an invalid format.");
     }
     const restored = JSON.parse(JSON.stringify(workspace));
-    for (const item of restored.items) {
-      if (item.type !== "image" || !item.storagePath) continue;
-      const validPathPrefix = activeProjectId
-        ? `projects/${activeProjectId}/`
-        : `${SESSION.id}/`;
+    const imageItems = restored.items.filter(
+      (item) => item.type === "image" && item.storagePath,
+    );
+    const validPathPrefix = activeProjectId
+      ? `projects/${activeProjectId}/`
+      : `${SESSION.id}/`;
+    for (const item of imageItems) {
       if (!item.storagePath.startsWith(validPathPrefix)) {
         throw new Error("A screenshot does not belong to this cloud account.");
       }
-      const { data, error } = await supabase.storage
-        .from(STORAGE_BUCKET)
-        .createSignedUrl(item.storagePath, 60 * 60 * 24);
-      if (error) throw error;
-      item.src = data.signedUrl;
+    }
+    for (let index = 0; index < imageItems.length; index += 6) {
+      await Promise.all(
+        imageItems.slice(index, index + 6).map(async (item) => {
+          const { data, error } = await supabase.storage
+            .from(STORAGE_BUCKET)
+            .createSignedUrl(item.storagePath, 60 * 60 * 24);
+          if (error) throw error;
+          item.src = data.signedUrl;
+        }),
+      );
     }
     return restored;
   }
@@ -806,7 +830,7 @@ if (sessionError || !sessionData.session) {
   }
 
   /* ---------- render ---------- */
-  function match(i) {
+  function match(i, collectionById) {
     const q = F.q.trim().toLowerCase();
     if (F.type != "all" && i.type != F.type) return false;
     if (F.coll && i.coll != F.coll) return false;
@@ -814,7 +838,9 @@ if (sessionError || !sessionData.session) {
     if (F.date == "hour" && Date.now() - i.t > 36e5) return false;
     if (F.date == "today" && Date.now() - i.t > 864e5) return false;
     if (!q) return true;
-    const c = S.colls.find((c) => c.id == i.coll);
+    const c = collectionById
+      ? collectionById.get(i.coll)
+      : S.colls.find((c) => c.id == i.coll);
     return [
       i.title,
       i.content,
@@ -844,7 +870,7 @@ if (sessionError || !sessionData.session) {
       m = i.content.replace(/^https?:\/\//, "");
     }
     if (i.type == "image") {
-      b = `<div class=bi style="background-image:url('${i.src}')"></div>`;
+      b = `<img class=bi src="${ea(i.src)}" alt="${ea(i.title || "Image preview")}" loading=lazy decoding=async>`;
       m = [i.dims, sourceHost(i.sourceUrl)].filter(Boolean).join(" · ");
     }
     if (i.type == "file") {
@@ -859,7 +885,14 @@ if (sessionError || !sessionData.session) {
     return `<div class="it${sel.has(i.id) ? " sel" : ""}${vis ? "" : " dim"}${conn ? " cn" : ""}" data-id="${i.id}" style="left:${i.x}px;top:${i.y}px;width:${i.w}px;height:${i.h}px"><div class=hd style="background:${t.c}"><div>${t.l}<small>${ago(i.t)}</small></div><div class=ic>${i.fav ? ic("star").replace("fill:none", "").replace("<svg", '<svg style="fill:#fff"') : ""}${i.pin ? ic("pin") : ""}</div></div><div class=bd>${b}</div><div class=ft><b>${e(i.title)}</b><small>${e(m + tg)}</small></div><div class=rs></div></div>`;
   }
   function rC() {
-    const v = new Set(S.items.filter(match).map((i) => i.id));
+    const collectionById = new Map(
+      S.colls.map((collection) => [collection.id, collection]),
+    );
+    const v = new Set(
+      S.items
+        .filter((item) => match(item, collectionById))
+        .map((item) => item.id),
+    );
     $("#o").innerHTML = S.items.map((i) => itemHTML(i, v.has(i.id))).join("");
     rF();
     rL();
@@ -871,14 +904,34 @@ if (sessionError || !sessionData.session) {
         : '<div><h3>Your canvas, your way</h3>Start with a note, code snippet, link, color, or image. Paste with Ctrl/⌘+V or import files.<div class=emp-actions><button class="btn p" data-a=add>Create an object</button><button class=btn data-a=paste>Paste</button><button class=btn data-a=import>Import files</button></div></div>';
   }
   function rF() {
+    const boundsByCollection = new Map(
+      S.colls.map((collection) => [collection.id, null]),
+    );
+    for (const item of S.items) {
+      const bounds = boundsByCollection.get(item.coll);
+      if (bounds === undefined) continue;
+      if (bounds === null) {
+        boundsByCollection.set(item.coll, {
+          x1: item.x,
+          y1: item.y,
+          x2: item.x + item.w,
+          y2: item.y + item.h,
+        });
+      } else {
+        bounds.x1 = Math.min(bounds.x1, item.x);
+        bounds.y1 = Math.min(bounds.y1, item.y);
+        bounds.x2 = Math.max(bounds.x2, item.x + item.w);
+        bounds.y2 = Math.max(bounds.y2, item.y + item.h);
+      }
+    }
     $("#fr").innerHTML = S.colls
       .map((c) => {
-        const m = S.items.filter((i) => i.coll == c.id);
-        if (!m.length) return "";
-        const x1 = Math.min(...m.map((i) => i.x)) - 26,
-          y1 = Math.min(...m.map((i) => i.y)) - 26,
-          x2 = Math.max(...m.map((i) => i.x + i.w)) + 26,
-          y2 = Math.max(...m.map((i) => i.y + i.h)) + 26;
+        const bounds = boundsByCollection.get(c.id);
+        if (!bounds) return "";
+        const x1 = bounds.x1 - 26,
+          y1 = bounds.y1 - 26,
+          x2 = bounds.x2 + 26,
+          y2 = bounds.y2 + 26;
         return `<div class=fr style="left:${x1}px;top:${y1}px;width:${x2 - x1}px;height:${y2 - y1}px"><span data-c="${c.id}">${e(c.name)}</span></div>`;
       })
       .join("");
@@ -897,10 +950,11 @@ if (sessionError || !sessionData.session) {
       : { x: ac.x, y: a.y, d: -1, h: 0 };
   }
   function rL() {
+    const itemsById = new Map(S.items.map((item) => [item.id, item]));
     $("#ln").innerHTML = S.links
       .map((l) => {
-        const a = byId(l.a),
-          b = byId(l.b);
+        const a = itemsById.get(l.a),
+          b = itemsById.get(l.b);
         if (!a || !b) return "";
         const p = anc(a, b),
           q = anc(b, a),
@@ -919,7 +973,7 @@ if (sessionError || !sessionData.session) {
     $("#vp").style.backgroundSize = `${g}px ${g}px`;
     $("#vp").style.backgroundPosition = `${v.x}px ${v.y}px`;
     $("#zl").textContent = Math.round(v.z * 100) + "%";
-    save();
+    scheduleViewSave();
   }
   function rR() {
     const cs = S.colls
@@ -1484,9 +1538,199 @@ if (sessionError || !sessionData.session) {
     try {
       const profile = await ensureProfile();
       const o = modal(
-        `<h2>Your public profile</h2><p>Your profile can show published collections, public projects, followers, and activity. Your email and private work stay hidden.</p><label>Username<input id=profile-username value="${ea(profile.username)}" maxlength=24 autocomplete=off></label><label>Display name<input id=profile-name value="${ea(profile.display_name)}" maxlength=60></label><p id=profile-status role=status></p><div class=row><button class=btn id=profile-cancel>Cancel</button><button class=btn id=profile-view>View profile</button><button class="btn p" id=profile-save>Save profile</button></div>`,
+        `<h2>Your public profile</h2><p>Your profile can show published collections, public projects, followers, and activity. Your email and private work stay hidden.</p><div class=profile-photo-row><img id=profile-photo-preview alt="Profile photo preview"${profile.avatar_path ? ` src="${ea(supabase.storage.from("clipcanva-avatars").getPublicUrl(profile.avatar_path).data.publicUrl)}"` : " hidden"}><span id=profile-photo-placeholder${profile.avatar_path ? " hidden" : ""}>${ea(profile.display_name.slice(0, 1).toUpperCase())}</span><div><label for=profile-photo>Profile picture</label><input id=profile-photo type=file accept="image/png,image/jpeg,image/webp"><small>PNG, JPG, or WebP · up to 3 MB. This picture is public.</small><button class=btn id=profile-photo-remove type=button${profile.avatar_path ? "" : " hidden"}>Remove picture</button></div></div><div id=profile-crop-wrap hidden><canvas id=profile-crop-preview width=224 height=224 aria-label="Profile picture crop preview"></canvas><label for=profile-photo-zoom>Zoom</label><input id=profile-photo-zoom type=range min=1 max=3 step=0.01 value=1><small>Drag the picture to adjust its position.</small></div><label>Username<input id=profile-username value="${ea(profile.username)}" maxlength=24 autocomplete=off></label><label>Display name<input id=profile-name value="${ea(profile.display_name)}" maxlength=60></label><p id=profile-status role=status></p><div class=row><button class=btn id=profile-cancel>Cancel</button><button class=btn id=profile-view>View profile</button><button class="btn p" id=profile-save>Save profile</button></div>`,
       );
-      o.querySelector("#profile-cancel").onclick = () => o.remove();
+      const photoInput = o.querySelector("#profile-photo");
+      const photoPreview = o.querySelector("#profile-photo-preview");
+      const photoPlaceholder = o.querySelector("#profile-photo-placeholder");
+      const removePhotoButton = o.querySelector("#profile-photo-remove");
+      const cropWrap = o.querySelector("#profile-crop-wrap");
+      const cropCanvas = o.querySelector("#profile-crop-preview");
+      const cropContext = cropCanvas.getContext("2d");
+      const zoomInput = o.querySelector("#profile-photo-zoom");
+      photoPreview.addEventListener("error", () => {
+        photoPreview.hidden = true;
+        photoPlaceholder.hidden = false;
+      });
+      let selectedPhoto = null;
+      let cropImage = null;
+      let removePhoto = false;
+      let previewUrl = null;
+      let zoom = 1;
+      let offsetX = 0;
+      let offsetY = 0;
+      let dragStart = null;
+      const cropSide = 112;
+      const drawCrop = (context, size) => {
+        if (!cropImage) return;
+        const ratio = size / cropSide;
+        const scale =
+          Math.max(
+            cropSide / cropImage.naturalWidth,
+            cropSide / cropImage.naturalHeight,
+          ) * zoom;
+        const width = cropImage.naturalWidth * scale;
+        const height = cropImage.naturalHeight * scale;
+        const left = (cropSide - width) / 2 + offsetX;
+        const top = (cropSide - height) / 2 + offsetY;
+        context.clearRect(0, 0, size, size);
+        context.drawImage(
+          cropImage,
+          left * ratio,
+          top * ratio,
+          width * ratio,
+          height * ratio,
+        );
+      };
+      const renderCrop = () => {
+        drawCrop(cropContext, cropCanvas.width);
+      };
+      const clampCropOffset = () => {
+        const scale =
+          Math.max(
+            cropSide / cropImage.naturalWidth,
+            cropSide / cropImage.naturalHeight,
+          ) * zoom;
+        const overflowX = Math.max(
+          0,
+          (cropImage.naturalWidth * scale - cropSide) / 2,
+        );
+        const overflowY = Math.max(
+          0,
+          (cropImage.naturalHeight * scale - cropSide) / 2,
+        );
+        offsetX = Math.max(-overflowX, Math.min(overflowX, offsetX));
+        offsetY = Math.max(-overflowY, Math.min(overflowY, offsetY));
+      };
+      const createCroppedPhoto = () =>
+        new Promise((resolve, reject) => {
+          const output = document.createElement("canvas");
+          output.width = 512;
+          output.height = 512;
+          drawCrop(output.getContext("2d"), output.width);
+          output.toBlob(
+            (blob) =>
+              blob
+                ? resolve(blob)
+                : reject(new Error("Could not crop the selected image.")),
+            "image/jpeg",
+            0.9,
+          );
+        });
+      const revokePreview = () => {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = null;
+      };
+      const removeStoredPhoto = async (path) => {
+        try {
+          const { error } = await supabase.storage
+            .from("clipcanva-avatars")
+            .remove([path]);
+          if (error) throw error;
+          return true;
+        } catch (error) {
+          console.error("Could not remove a profile photo:", error);
+          return false;
+        }
+      };
+      o.querySelector("#profile-cancel").onclick = () => {
+        revokePreview();
+        o.remove();
+      };
+      o.addEventListener("pointerdown", (event) => {
+        if (event.target === o) revokePreview();
+      });
+      photoInput.addEventListener("change", () => {
+        const file = photoInput.files[0];
+        if (!file) return;
+        const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+        if (!allowedTypes.includes(file.type) || file.size > 3 * 1024 * 1024) {
+          photoInput.value = "";
+          o.querySelector("#profile-status").textContent =
+            "Choose a PNG, JPG, or WebP image smaller than 3 MB.";
+          return;
+        }
+        revokePreview();
+        previewUrl = URL.createObjectURL(file);
+        const image = new Image();
+        image.onload = () => {
+          selectedPhoto = file;
+          cropImage = image;
+          zoom = 1;
+          offsetX = 0;
+          offsetY = 0;
+          zoomInput.value = "1";
+          removePhoto = false;
+          photoPreview.hidden = true;
+          photoPlaceholder.hidden = true;
+          cropWrap.hidden = false;
+          removePhotoButton.hidden = false;
+          renderCrop();
+          o.querySelector("#profile-status").textContent = "";
+        };
+        image.onerror = () => {
+          selectedPhoto = null;
+          cropImage = null;
+          revokePreview();
+          photoInput.value = "";
+          o.querySelector("#profile-status").textContent =
+            "That image could not be opened. Choose another picture.";
+        };
+        image.src = previewUrl;
+      });
+      zoomInput.addEventListener("input", () => {
+        zoom = Number(zoomInput.value);
+        clampCropOffset();
+        renderCrop();
+      });
+      cropCanvas.addEventListener("pointerdown", (event) => {
+        if (!cropImage) return;
+        cropCanvas.setPointerCapture(event.pointerId);
+        dragStart = {
+          pointerX: event.clientX,
+          pointerY: event.clientY,
+          offsetX,
+          offsetY,
+        };
+      });
+      cropCanvas.addEventListener("pointermove", (event) => {
+        if (!dragStart) return;
+        const bounds = cropCanvas.getBoundingClientRect();
+        offsetX =
+          dragStart.offsetX +
+          ((event.clientX - dragStart.pointerX) * cropSide) / bounds.width;
+        offsetY =
+          dragStart.offsetY +
+          ((event.clientY - dragStart.pointerY) * cropSide) / bounds.height;
+        clampCropOffset();
+        renderCrop();
+      });
+      cropCanvas.addEventListener("pointerup", () => {
+        dragStart = null;
+      });
+      cropCanvas.addEventListener("pointercancel", () => {
+        dragStart = null;
+      });
+      removePhotoButton.onclick = () => {
+        selectedPhoto = null;
+        cropImage = null;
+        removePhoto = true;
+        photoInput.value = "";
+        revokePreview();
+        cropWrap.hidden = true;
+        photoPreview.removeAttribute("src");
+        photoPreview.hidden = true;
+        photoPlaceholder.hidden = true;
+        if (profile.avatar_path) {
+          photoPreview.src = supabase.storage
+            .from("clipcanva-avatars")
+            .getPublicUrl(profile.avatar_path).data.publicUrl;
+          photoPreview.hidden = false;
+        } else {
+          photoPlaceholder.hidden = false;
+        }
+        removePhotoButton.hidden = true;
+      };
       o.querySelector("#profile-view").onclick = () => {
         window.open(
           `community.html?user=${encodeURIComponent(profile.username)}`,
@@ -1512,6 +1756,7 @@ if (sessionError || !sessionData.session) {
         }
         const button = o.querySelector("#profile-save");
         button.disabled = true;
+        let uploadedPath = null;
         try {
           const { data: existingProfile, error: availabilityError } =
             await supabase
@@ -1531,11 +1776,28 @@ if (sessionError || !sessionData.session) {
             return;
           }
 
+          let avatarPath = profile.avatar_path;
+          if (selectedPhoto) {
+            const croppedPhoto = await createCroppedPhoto();
+            uploadedPath = `${SESSION.id}/${crypto.randomUUID()}.jpg`;
+            const { error: uploadError } = await supabase.storage
+              .from("clipcanva-avatars")
+              .upload(uploadedPath, croppedPhoto, {
+                contentType: "image/jpeg",
+                cacheControl: "3600",
+              });
+            if (uploadError) throw uploadError;
+            avatarPath = uploadedPath;
+          } else if (removePhoto) {
+            avatarPath = null;
+          }
+
           const { error } = await supabase
             .from("clipcanva_profiles")
             .update({
               username,
               display_name: displayName,
+              avatar_path: avatarPath,
               updated_at: new Date().toISOString(),
             })
             .eq("user_id", SESSION.id);
@@ -1547,12 +1809,21 @@ if (sessionError || !sessionData.session) {
             } else {
               message.textContent = `Profile could not be saved: ${error.message}`;
             }
+            if (uploadedPath) await removeStoredPhoto(uploadedPath);
             return;
           }
+          uploadedPath = null;
+          if (profile.avatar_path && profile.avatar_path !== avatarPath) {
+            if (!(await removeStoredPhoto(profile.avatar_path))) {
+              toast("Profile saved, but the previous photo could not be removed.");
+            }
+          }
+          revokePreview();
           o.remove();
           toast("Public profile updated");
         } catch (error) {
           message.textContent = `Profile could not be saved: ${error.message}`;
+          if (uploadedPath) await removeStoredPhoto(uploadedPath);
         } finally {
           button.disabled = false;
         }
@@ -2019,7 +2290,7 @@ if (sessionError || !sessionData.session) {
     if (!activeProjectId || projectHasConflict) return;
     const { data: project, error } = await supabase
       .from("clipcanva_projects")
-      .select("data,updated_at")
+      .select("updated_at")
       .eq("id", activeProjectId)
       .maybeSingle();
     if (error) {
@@ -2030,6 +2301,19 @@ if (sessionError || !sessionData.session) {
       return;
     }
     if (!project || project.updated_at === projectUpdatedAt) return;
+    const { data: latestProject, error: latestError } = await supabase
+      .from("clipcanva_projects")
+      .select("data,updated_at")
+      .eq("id", activeProjectId)
+      .maybeSingle();
+    if (latestError) {
+      if (Date.now() - projectPollErrorShown > 60000) {
+        projectPollErrorShown = Date.now();
+        toast(`Could not load project updates: ${latestError.message}`);
+      }
+      return;
+    }
+    if (!latestProject || latestProject.updated_at === projectUpdatedAt) return;
     if (saved === "pending" || saved === "syncing") {
       projectHasConflict = true;
       saved = "fail";
@@ -2041,8 +2325,8 @@ if (sessionError || !sessionData.session) {
       return;
     }
     try {
-      S = await loadCloudWorkspace(project.data);
-      projectUpdatedAt = project.updated_at;
+      S = await loadCloudWorkspace(latestProject.data);
+      projectUpdatedAt = latestProject.updated_at;
       last = snap();
       lastCloudContent = snap();
       hist = [];
@@ -2063,6 +2347,8 @@ if (sessionError || !sessionData.session) {
   const A = {
     logout: async () => {
       clearTimeout(st);
+      clearTimeout(viewSaveTimer);
+      viewSaveTimer = null;
       try {
         const snapshot = JSON.parse(JSON.stringify(S));
         await DB.set(snapshot);

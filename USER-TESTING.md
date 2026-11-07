@@ -13,9 +13,10 @@ content is added only when a user pastes it into the canvas.
 - Confirm the Supabase migration and local auth redirect URL are configured.
   Have participants create and confirm their own account; never collect their
   passwords.
-- Apply all five Supabase migrations in timestamp order before testing
+- Apply all six Supabase migrations in timestamp order before testing
   discovery, collection publishing, follows, public team projects, or profile
-  activity. Verify that a taken username is rejected with a clear message.
+  activity. Verify that a taken username is rejected with a clear message and
+  profile pictures can be cropped, zoomed, uploaded, and removed.
 - Ask permission to observe their screen and take notes. Do not record without
   separate consent.
 - Do not explain the interface before the first task.

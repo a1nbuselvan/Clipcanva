@@ -22,12 +22,23 @@ function escapeHTML(value) {
   );
 }
 
+function avatarMarkup(profile, className = "avatar") {
+  const initial = escapeHTML(profile.display_name.slice(0, 1).toUpperCase());
+  if (!profile.avatar_path) {
+    return `<span class="${className}" aria-hidden="true">${initial}</span>`;
+  }
+  const imageUrl = supabase.storage
+    .from("clipcanva-avatars")
+    .getPublicUrl(profile.avatar_path).data.publicUrl;
+  return `<span class="${className} avatar-image" aria-hidden="true"><img src="${escapeHTML(imageUrl)}" alt="" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span hidden>${initial}</span></span>`;
+}
+
 function showProfiles(profiles) {
   results.innerHTML = profiles
     .map(
       (profile) => `
         <a class="creator" href="community.html?user=${encodeURIComponent(profile.username)}">
-          <span class="avatar" aria-hidden="true">${escapeHTML(profile.display_name.slice(0, 1).toUpperCase())}</span>
+          ${avatarMarkup(profile)}
           <span class="creator-info">
             <strong>${escapeHTML(profile.display_name)}</strong>
             <small>@${escapeHTML(profile.username)}</small>
@@ -129,7 +140,7 @@ async function showRelations(userId, kind) {
   const { data: profiles, error: profileError } = ids.length
     ? await supabase
         .from("clipcanva_profiles")
-        .select("user_id,username,display_name")
+        .select("user_id,username,display_name,avatar_path")
         .in("user_id", ids)
     : { data: [], error: null };
   if (profileError) throw profileError;
@@ -141,7 +152,7 @@ async function showRelations(userId, kind) {
       .map((id) => {
         const profile = byId.get(id);
         return profile
-          ? `<a href="community.html?user=${encodeURIComponent(profile.username)}">${escapeHTML(profile.display_name)} · @${escapeHTML(profile.username)}</a>`
+          ? `<a class="relation-profile" href="community.html?user=${encodeURIComponent(profile.username)}">${avatarMarkup(profile, "avatar relation-avatar")}<span>${escapeHTML(profile.display_name)} · @${escapeHTML(profile.username)}</span></a>`
           : "";
       })
       .join("") || "<p class=privacy>No accounts to show yet.</p>"
@@ -153,7 +164,7 @@ async function loadProfile(handle) {
   results.replaceChildren();
   const { data: profile, error } = await supabase
     .from("clipcanva_profiles")
-    .select("user_id,username,display_name")
+    .select("user_id,username,display_name,avatar_path")
     .eq("username", handle)
     .maybeSingle();
   if (error) throw error;
@@ -228,7 +239,8 @@ async function loadProfile(handle) {
     isFollowing = !!follow;
   }
   const social = $("#profile-social");
-  social.innerHTML = `<strong>@${escapeHTML(profile.username)}</strong><div class="social-counts"><button type=button data-relations=followers>${followers || 0} followers</button><button type=button data-relations=following>${following || 0} following</button></div>${currentUser && currentUser.id !== profile.user_id ? `<button type=button id=follow-button class="follow-button${isFollowing ? " following" : ""}">${isFollowing ? "Following" : "Follow"}</button>` : !currentUser ? '<a class="follow-button" href="auth.html">Sign in to follow</a>' : ""}`;
+  const profileAvatar = avatarMarkup(profile, "profile-avatar");
+  social.innerHTML = `${profileAvatar}<strong>@${escapeHTML(profile.username)}</strong><div class="social-counts"><button type=button data-relations=followers>${followers || 0} followers</button><button type=button data-relations=following>${following || 0} following</button></div>${currentUser && currentUser.id !== profile.user_id ? `<button type=button id=follow-button class="follow-button${isFollowing ? " following" : ""}">${isFollowing ? "Following" : "Follow"}</button>` : !currentUser ? '<a class="follow-button" href="auth.html">Sign in to follow</a>' : ""}`;
   social.querySelectorAll("[data-relations]").forEach((button) => {
     button.addEventListener("click", () => {
       showRelations(profile.user_id, button.dataset.relations).catch(
@@ -290,7 +302,7 @@ async function searchProfiles(term) {
   }
   const { data, error } = await supabase
     .from("clipcanva_profiles")
-    .select("user_id,username,display_name")
+    .select("user_id,username,display_name,avatar_path")
     .ilike("username", `%${handle}%`)
     .order("username")
     .limit(30);
