@@ -9,6 +9,9 @@
   color-scheme: dark;
   box-sizing: border-box;
 }
+.invite-row .btn {
+  flex: none;
+}
 * {
   box-sizing: inherit;
 }
@@ -155,6 +158,42 @@ svg.i {
 }
 .sign-out:hover {
   background: #ffffff10;
+}
+body.readonly [data-a="add"],
+body.readonly [data-a="undo"],
+body.readonly [data-a="redo"],
+body.readonly [data-a="cap"],
+body.readonly [data-a="publish"],
+body.readonly [data-a="newco"] {
+  display: none;
+}
+body.readonly #o {
+  pointer-events: none;
+}
+body.readonly .account-chip::after {
+  content: " · view only";
+}
+.team-project,
+.invite-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ln);
+  border-radius: 12px;
+  background: #111113;
+  text-align: left;
+}
+.team-project b,
+.invite-row span {
+  flex: 1;
+}
+.team-project small,
+.muted {
+  color: var(--mu);
+  font-size: 12px;
 }
 .r1 {
   display: flex;
@@ -593,7 +632,9 @@ select.pill {
 .pn input,
 .pn textarea,
 .pn select,
-.dlg input {
+.dlg input,
+.dlg textarea,
+.dlg select {
   display: block;
   width: 100%;
   margin-top: 5px;
@@ -610,6 +651,19 @@ select.pill {
 .pn select:focus,
 .dlg input:focus {
   border-color: #fff7;
+}
+.dlg textarea:focus,
+.dlg select:focus {
+  border-color: #fff7;
+}
+.dlg label:not(.ck) {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--mu);
+  font-size: 12px;
+}
+.dlg [hidden] {
+  display: none !important;
 }
 .pn textarea {
   font:

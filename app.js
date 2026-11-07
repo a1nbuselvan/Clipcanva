@@ -3,6 +3,15 @@ import { supabase } from "./supabase-client.js";
 const $ = (s) => document.querySelector(s),
   uid = () => Math.random().toString(36).slice(2, 9);
 let SESSION = null;
+let activeProjectId = null;
+let projectRole = null;
+let projectName = "";
+let projectUpdatedAt = null;
+let projectHasConflict = false;
+let suppressSave = false;
+let lastCloudContent = "";
+let projectPollErrorShown = 0;
+let publicCanvas = null;
 const { data: sessionData, error: sessionError } =
   await supabase.auth.getSession();
 if (sessionError || !sessionData.session) {
@@ -52,6 +61,11 @@ if (sessionError || !sessionData.session) {
     shield:
       '<path d="M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.6 0C7.500 20.500 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.500-1.200 6.200-2.700a1.200 1.200 0 0 1 1.500 0C14.500 3.800 17 5 19 5a1 1 0 0 1 1 1z"/>',
     grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+    users:
+      '<path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+    share:
+      '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 10.7 6.8-4.4m-6.8 7 6.8 4.4"/>',
+    user: '<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="8" r="5"/>',
   };
   const ic = (n) => `<svg class="i" viewBox="0 0 24 24">${P[n]}</svg>`;
   document.body.innerHTML = document.body.innerHTML.replace(
@@ -143,8 +157,13 @@ if (sessionError || !sessionData.session) {
     syncQueue = Promise.resolve(),
     saveVersion = 0;
   let cap = { auto: false, state: "manual", lastTxt: "" };
-  const snap = () =>
-    JSON.stringify({ items: S.items, links: S.links, colls: S.colls });
+  const contentSnapshot = (workspace = S) =>
+    JSON.stringify({
+      items: workspace.items,
+      links: workspace.links,
+      colls: workspace.colls,
+    });
+  const snap = () => contentSnapshot();
   const byId = (id) => S.items.find((i) => i.id == id),
     nodeOf = (id) => document.querySelector(`.it[data-id="${id}"]`);
   const DB = {
@@ -163,10 +182,7 @@ if (sessionError || !sessionData.session) {
     async get() {
       const d = await this.open();
       return new Promise((resolve, reject) => {
-        const q = d
-          .transaction("s")
-          .objectStore("s")
-          .get(`state:${SESSION.id}`);
+        const q = d.transaction("s").objectStore("s").get(this.key());
         q.onsuccess = () => resolve(q.result);
         q.onerror = () => reject(q.error);
       });
@@ -192,18 +208,29 @@ if (sessionError || !sessionData.session) {
       const d = await this.open();
       return new Promise((r, j) => {
         const t = d.transaction("s", "readwrite");
-        t.objectStore("s").put(v, `state:${SESSION.id}`);
+        t.objectStore("s").put(v, this.key());
         t.oncomplete = r;
         t.onerror = () => j(t.error);
       });
     },
+    key() {
+      return activeProjectId
+        ? `project:${activeProjectId}`
+        : `state:${SESSION.id}`;
+    },
   };
   let st;
   const save = () => {
+    if (suppressSave) return;
     clearTimeout(st);
     const version = ++saveVersion;
     saved = cloudUnavailable ? "fail" : "pending";
     rS();
+    if (projectRole === "viewer") {
+      saved = "ok";
+      rS();
+      return;
+    }
     st = setTimeout(async () => {
       const snapshot = JSON.parse(JSON.stringify(S));
       try {
@@ -214,7 +241,18 @@ if (sessionError || !sessionData.session) {
         toast(`Local save failed: ${error.message}`);
         return;
       }
-      if (!cloudReady) {
+      if (!cloudReady || projectRole === "viewer") {
+        rS();
+        return;
+      }
+      const cloudContent = contentSnapshot(snapshot);
+      if (!cloudUnavailable && cloudContent === lastCloudContent) {
+        saved = "ok";
+        rS();
+        return;
+      }
+      if (projectHasConflict) {
+        saved = "fail";
         rS();
         return;
       }
@@ -226,6 +264,7 @@ if (sessionError || !sessionData.session) {
         .then(() => syncCloudWorkspace(snapshot));
       try {
         await syncQueue;
+        lastCloudContent = cloudContent;
         if (version === saveVersion) saved = "ok";
       } catch (error) {
         if (version === saveVersion) saved = "fail";
@@ -237,29 +276,44 @@ if (sessionError || !sessionData.session) {
     }, 250);
   };
   async function syncCloudWorkspace(snapshot) {
-    const { data: previous, error: readError } = await supabase
-      .from("clipcanva_workspaces")
-      .select("data")
-      .eq("user_id", SESSION.id)
-      .maybeSingle();
+    const table = activeProjectId
+      ? "clipcanva_projects"
+      : "clipcanva_workspaces";
+    let previousQuery = supabase.from(table).select("data,updated_at");
+    previousQuery = activeProjectId
+      ? previousQuery.eq("id", activeProjectId)
+      : previousQuery.eq("user_id", SESSION.id);
+    const { data: previous, error: readError } =
+      await previousQuery.maybeSingle();
     if (readError) throw readError;
 
     const workspace = JSON.parse(JSON.stringify(snapshot));
     const retainedPaths = [];
+    const storagePrefix = activeProjectId
+      ? `projects/${activeProjectId}/`
+      : `${SESSION.id}/`;
     for (const item of workspace.items) {
       if (item.type !== "image") continue;
-      if (item.storagePath) {
+      if (item.storagePath?.startsWith(storagePrefix)) {
         retainedPaths.push(item.storagePath);
         delete item.src;
         continue;
       }
-      if (!item.src?.startsWith("data:image/")) {
+      let imageSource = item.src;
+      if (!imageSource && item.storagePath) {
+        const { data, error } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .createSignedUrl(item.storagePath, 60 * 60);
+        if (error) throw error;
+        imageSource = data.signedUrl;
+      }
+      if (!imageSource) {
         throw new Error(
           `Image "${item.title}" is missing its local image data.`,
         );
       }
 
-      const blob = await (await fetch(item.src)).blob();
+      const blob = await (await fetch(imageSource)).blob();
       if (blob.size > 8e6) {
         throw new Error(
           `Image "${item.title}" is over the 8 MB storage limit.`,
@@ -279,7 +333,7 @@ if (sessionError || !sessionData.session) {
         );
       }
 
-      const path = `${SESSION.id}/${item.id}.${extension}`;
+      const path = `${storagePrefix}${item.id}.${extension}`;
       const { error: uploadError } = await supabase.storage
         .from(STORAGE_BUCKET)
         .upload(path, blob, {
@@ -293,21 +347,34 @@ if (sessionError || !sessionData.session) {
       delete item.src;
     }
 
-    const { error: upsertError } = await supabase
-      .from("clipcanva_workspaces")
-      .upsert(
-        {
+    const payload = activeProjectId
+      ? { data: workspace, updated_at: new Date().toISOString() }
+      : {
           user_id: SESSION.id,
           data: workspace,
           updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" },
+        };
+    const mutation = activeProjectId
+      ? supabase
+          .from(table)
+          .update(payload)
+          .eq("id", activeProjectId)
+          .eq("updated_at", projectUpdatedAt)
+          .select("id,updated_at")
+          .single()
+      : supabase.from(table).upsert(payload, { onConflict: "user_id" });
+    const { data: updated, error: upsertError } = await mutation;
+    if (upsertError && activeProjectId && upsertError.code === "PGRST116") {
+      throw new Error(
+        "A teammate changed this project while you were editing. Reload the project to get their latest version before making more changes.",
       );
+    }
     if (upsertError) throw upsertError;
+    if (activeProjectId) projectUpdatedAt = updated.updated_at;
 
     const previousPaths = (previous?.data?.items || [])
       .map((item) => item.storagePath)
-      .filter((path) => path?.startsWith(`${SESSION.id}/`));
+      .filter((path) => path?.startsWith(storagePrefix));
     const removedPaths = previousPaths.filter(
       (path) => !retainedPaths.includes(path),
     );
@@ -331,7 +398,10 @@ if (sessionError || !sessionData.session) {
     const restored = JSON.parse(JSON.stringify(workspace));
     for (const item of restored.items) {
       if (item.type !== "image" || !item.storagePath) continue;
-      if (!item.storagePath.startsWith(`${SESSION.id}/`)) {
+      const validPathPrefix = activeProjectId
+        ? `projects/${activeProjectId}/`
+        : `${SESSION.id}/`;
+      if (!item.storagePath.startsWith(validPathPrefix)) {
         throw new Error("A screenshot does not belong to this cloud account.");
       }
       const { data, error } = await supabase.storage
@@ -360,6 +430,10 @@ if (sessionError || !sessionData.session) {
     });
   }
   function commit(q) {
+    if (projectRole === "viewer") {
+      toast("You have viewer access to this project.");
+      return;
+    }
     hist.push(last);
     if (hist.length > 80) hist.shift();
     last = snap();
@@ -378,11 +452,13 @@ if (sessionError || !sessionData.session) {
     rA();
   }
   const undo = () => {
+    if (projectRole === "viewer") return toast("You have viewer access.");
     if (!hist.length) return toast("Nothing to undo");
     fut.push(last);
     restore(hist.pop());
   };
   const redo = () => {
+    if (projectRole === "viewer") return toast("You have viewer access.");
     if (!fut.length) return toast("Nothing to redo");
     hist.push(last);
     restore(fut.pop());
@@ -861,7 +937,14 @@ if (sessionError || !sessionData.session) {
   }
   function rS() {
     const m = {
-      manual: ["", "Clipboard capture · paste anytime"],
+      manual: [
+        "",
+        projectRole === "viewer"
+          ? `Shared project · ${projectName}`
+          : activeProjectId
+            ? `Shared project · ${projectName}`
+            : "Clipboard capture · paste anytime",
+      ],
       armed: ["g", "Auto-capture on tab focus"],
       granted: ["g", "Clipboard allowed · manual"],
       denied: ["r", "Clipboard access blocked"],
@@ -910,6 +993,14 @@ if (sessionError || !sessionData.session) {
       p.innerHTML = `<div class=ih><b>${sel.size} objects selected</b><button class=b data-a="x" title="Close panel" aria-label="Close panel" style="width:30px;height:30px">${ic("x")}</button></div><p style="color:var(--mu);margin-top:0">Combine merges their contents into a new text object. Originals stay untouched.</p>
  <label>Move all to collection<select id=f-o><option value="">None</option>${co}</select></label>
  <div class=acts><button data-a="comb" class=on>${ic("merge")}Combine</button><button data-a="grp">${ic("folder")}Group</button><button data-a="conn">${ic("link")}Connect</button><button data-a="star">${ic("star")}Favorite</button><button data-a="dup">${ic("copy")}Duplicate</button><button data-a="del" class=dg>${ic("trash")}Delete</button></div>`;
+    if (projectRole === "viewer") {
+      p.querySelectorAll("input,textarea,select").forEach((control) => {
+        control.disabled = true;
+      });
+      p.querySelectorAll(".acts [data-a]").forEach((button) => {
+        if (button.dataset.a !== "copy") button.disabled = true;
+      });
+    }
   }
   const pO = () =>
     $("#stage").classList.toggle(
@@ -1006,6 +1097,10 @@ if (sessionError || !sessionData.session) {
   }
   function manageCollection(collection, x, y) {
     if (!collection) return;
+    if (projectRole === "viewer") {
+      toast("You have viewer access to this project.");
+      return;
+    }
     menu(x, y, [
       [
         "Rename collection",
@@ -1523,6 +1618,468 @@ if (sessionError || !sessionData.session) {
     );
     o.querySelector("#cl").onclick = () => o.remove();
   }
+  async function ensureProfile() {
+    const { data, error } = await supabase.rpc("ensure_clipcanva_profile");
+    if (error) throw error;
+    return data;
+  }
+  async function profileModal() {
+    try {
+      const profile = await ensureProfile();
+      const o = modal(
+        `<h2>Your public profile</h2><p>Your username and display name can be found in Creator search. Your email stays private.</p><label>Username<input id=profile-username value="${ea(profile.username)}" maxlength=24 autocomplete=off></label><label>Display name<input id=profile-name value="${ea(profile.display_name)}" maxlength=60></label><p id=profile-status role=status></p><div class=row><button class=btn id=profile-cancel>Cancel</button><button class="btn p" id=profile-save>Save profile</button></div>`,
+      );
+      o.querySelector("#profile-cancel").onclick = () => o.remove();
+      o.querySelector("#profile-save").onclick = async () => {
+        const username = o
+          .querySelector("#profile-username")
+          .value.trim()
+          .toLowerCase();
+        const displayName = o.querySelector("#profile-name").value.trim();
+        const message = o.querySelector("#profile-status");
+        if (!/^[a-z0-9][a-z0-9_-]{2,23}$/.test(username)) {
+          message.textContent =
+            "Username must be 3–24 characters: letters, numbers, _ or -.";
+          return;
+        }
+        if (displayName.length < 1 || displayName.length > 60) {
+          message.textContent = "Display name must be 1–60 characters.";
+          return;
+        }
+        const button = o.querySelector("#profile-save");
+        button.disabled = true;
+        const { error } = await supabase
+          .from("clipcanva_profiles")
+          .update({
+            username,
+            display_name: displayName,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", SESSION.id);
+        button.disabled = false;
+        if (error) {
+          message.textContent = `Profile could not be saved: ${error.message}`;
+          return;
+        }
+        o.remove();
+        toast("Public profile updated");
+      };
+    } catch (error) {
+      toast(`Public profiles are unavailable: ${error.message}`);
+    }
+  }
+  function publicAssetPath(url) {
+    const marker = "/storage/v1/object/public/clipcanva-public-assets/";
+    const index = url.indexOf(marker);
+    if (index < 0) return null;
+    try {
+      return decodeURIComponent(url.slice(index + marker.length));
+    } catch {
+      return null;
+    }
+  }
+  async function publishCurrentCanvas(title) {
+    const profile = await ensureProfile();
+    const { data: existing, error: existingError } = await supabase
+      .from("clipcanva_public_canvases")
+      .select("id,data")
+      .eq("user_id", SESSION.id)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    const canvasId = existing?.id || crypto.randomUUID();
+    const previousPaths = (existing?.data?.items || [])
+      .map((item) => publicAssetPath(item.publicSrc || ""))
+      .filter(Boolean);
+    const workspace = JSON.parse(JSON.stringify(S));
+    const retainedPaths = [];
+    let published;
+    try {
+      for (const item of workspace.items) {
+        if (item.type !== "image") continue;
+        let source = item.src;
+        if (!source && item.storagePath) {
+          const { data, error } = await supabase.storage
+            .from(STORAGE_BUCKET)
+            .createSignedUrl(item.storagePath, 60 * 60);
+          if (error) throw error;
+          source = data.signedUrl;
+        }
+        if (!source) {
+          throw new Error(`Image "${item.title}" has no preview to publish.`);
+        }
+        const blob = await (await fetch(source)).blob();
+        if (blob.size > 8e6) {
+          throw new Error(`Image "${item.title}" is over the 8 MB limit.`);
+        }
+        const extensions = {
+          "image/png": "png",
+          "image/jpeg": "jpg",
+          "image/webp": "webp",
+          "image/gif": "gif",
+        };
+        const extension = extensions[blob.type];
+        if (!extension) {
+          throw new Error(`Image format "${blob.type}" cannot be published.`);
+        }
+        const path = `${SESSION.id}/${canvasId}/${crypto.randomUUID()}.${extension}`;
+        const { error: uploadError } = await supabase.storage
+          .from("clipcanva-public-assets")
+          .upload(path, blob, {
+            cacheControl: "3600",
+            contentType: blob.type,
+            upsert: false,
+          });
+        if (uploadError) throw uploadError;
+        retainedPaths.push(path);
+        item.publicSrc = supabase.storage
+          .from("clipcanva-public-assets")
+          .getPublicUrl(path).data.publicUrl;
+        delete item.src;
+        delete item.storagePath;
+      }
+      const { data, error } = await supabase
+        .from("clipcanva_public_canvases")
+        .upsert(
+          {
+            id: canvasId,
+            user_id: SESSION.id,
+            title: title.trim(),
+            data: workspace,
+            is_public: true,
+            published_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" },
+        )
+        .select("id,title,data")
+        .single();
+      if (error) throw error;
+      published = data;
+    } catch (error) {
+      if (retainedPaths.length) {
+        const { error: cleanupError } = await supabase.storage
+          .from("clipcanva-public-assets")
+          .remove(retainedPaths);
+        if (cleanupError) {
+          throw new Error(
+            `${error.message} Uploaded public images could not be cleaned up: ${cleanupError.message}`,
+          );
+        }
+      }
+      throw error;
+    }
+    publicCanvas = published;
+    const obsoletePaths = previousPaths.filter(
+      (path) => !retainedPaths.includes(path),
+    );
+    if (obsoletePaths.length) {
+      const { error: removeError } = await supabase.storage
+        .from("clipcanva-public-assets")
+        .remove(obsoletePaths);
+      if (removeError) {
+        toast(
+          `Canvas published, but old public images could not be removed: ${removeError.message}`,
+        );
+        return;
+      }
+    }
+    const shareUrl = new URL(
+      `canvas.html?id=${encodeURIComponent(published.id)}`,
+      location.href,
+    ).href;
+    toast(`Published by @${profile.username}`, [
+      "Copy link",
+      () => navigator.clipboard.writeText(shareUrl),
+    ]);
+  }
+  async function publishModal() {
+    try {
+      const profile = await ensureProfile();
+      const { data, error } = await supabase
+        .from("clipcanva_public_canvases")
+        .select("id,title,data,is_public")
+        .eq("user_id", SESSION.id)
+        .maybeSingle();
+      if (error) throw error;
+      publicCanvas = data;
+      const o = modal(
+        `<h2>Publish this canvas</h2><p>Publishing makes this canvas and its images visible to everyone on your public profile. Your email and private workspace remain hidden. You can unpublish it anytime.</p><label>Canvas title<input id=publish-title maxlength=100 value="${ea(data?.title || `${profile.display_name}'s canvas`)}"></label><p id=publish-status role=status></p><div class=row><button class=btn id=publish-cancel>Cancel</button>${data?.is_public ? '<button class="btn" id=unpublish>Unpublish</button>' : ""}<button class="btn p" id=publish-confirm>${data?.is_public ? "Update public canvas" : "Publish canvas"}</button></div>`,
+      );
+      o.querySelector("#publish-cancel").onclick = () => o.remove();
+      o.querySelector("#publish-confirm").onclick = async () => {
+        const title = o.querySelector("#publish-title").value.trim();
+        const message = o.querySelector("#publish-status");
+        if (!title || title.length > 100) {
+          message.textContent = "Enter a title between 1 and 100 characters.";
+          return;
+        }
+        const button = o.querySelector("#publish-confirm");
+        button.disabled = true;
+        try {
+          await publishCurrentCanvas(title);
+          o.remove();
+        } catch (error) {
+          message.textContent = `Could not publish: ${error.message}`;
+          button.disabled = false;
+        }
+      };
+      o.querySelector("#unpublish")?.addEventListener("click", async () => {
+        const button = o.querySelector("#unpublish");
+        button.disabled = true;
+        const { error: updateError } = await supabase
+          .from("clipcanva_public_canvases")
+          .update({ is_public: false, updated_at: new Date().toISOString() })
+          .eq("id", data.id);
+        if (updateError) {
+          o.querySelector("#publish-status").textContent =
+            `Could not unpublish: ${updateError.message}`;
+          button.disabled = false;
+          return;
+        }
+        const paths = (data.data?.items || [])
+          .map((item) => publicAssetPath(item.publicSrc || ""))
+          .filter(Boolean);
+        if (paths.length) {
+          const { error: removeError } = await supabase.storage
+            .from("clipcanva-public-assets")
+            .remove(paths);
+          if (removeError) {
+            o.querySelector("#publish-status").textContent =
+              `Canvas is unpublished, but public images could not be removed: ${removeError.message}`;
+            button.disabled = false;
+            return;
+          }
+        }
+        publicCanvas = { ...data, is_public: false };
+        o.remove();
+        toast("Canvas unpublished");
+      });
+    } catch (error) {
+      toast(`Publishing is unavailable: ${error.message}`);
+    }
+  }
+  async function teamModal() {
+    try {
+      await ensureProfile();
+      const o = modal(
+        `<h2>Team projects</h2><p>Private canvases shared only with invited members. Editors can change the canvas; viewers can only browse.</p><div class=row><input id=project-name maxlength=80 placeholder="New project name"><button class="btn p" id=project-create>Create project</button></div><p id=team-status role=status></p><h3>Your projects</h3><div id=project-list></div><h3>Invitations</h3><div id=invite-list></div><h3>Invite by username</h3><label>Project<select id=invite-project></select></label><div class=row><input id=invite-username maxlength=24 placeholder="username"><select id=invite-role><option value=editor>Editor</option><option value=viewer>Viewer</option></select><button class="btn p" id=invite-send>Invite</button></div><div class=row><button class=btn id=team-close>Done</button></div>`,
+      );
+      o.querySelector("#team-close").onclick = () => o.remove();
+      const status = o.querySelector("#team-status");
+      const refresh = async () => {
+        const [
+          { data: projects, error: projectError },
+          { data: memberships, error: membershipError },
+          { data: invites, error: inviteError },
+        ] = await Promise.all([
+          supabase
+            .from("clipcanva_projects")
+            .select("id,name,owner_id,updated_at")
+            .order("updated_at", { ascending: false }),
+          supabase
+            .from("clipcanva_project_members")
+            .select("project_id,role")
+            .eq("user_id", SESSION.id),
+          supabase
+            .from("clipcanva_project_invites")
+            .select("id,project_id,role,created_at")
+            .eq("invitee_id", SESSION.id)
+            .order("created_at", { ascending: false }),
+        ]);
+        if (projectError) throw projectError;
+        if (membershipError) throw membershipError;
+        if (inviteError) throw inviteError;
+        const roleByProject = new Map(
+          (memberships || []).map((membership) => [
+            membership.project_id,
+            membership.role,
+          ]),
+        );
+        const manageableProjects = (projects || []).filter((project) =>
+          ["owner", "editor"].includes(roleByProject.get(project.id)),
+        );
+        o.querySelector("#project-list").innerHTML =
+          (projects || [])
+            .map(
+              (project) =>
+                `<button class=team-project data-project="${ea(project.id)}"><b>${e(project.name)}</b><small>${e(roleByProject.get(project.id) || "Member")}</small></button>`,
+            )
+            .join("") || "<p class=muted>No team projects yet.</p>";
+        o.querySelector("#invite-project").innerHTML = (projects || [])
+          .filter((project) => manageableProjects.includes(project))
+          .map(
+            (project) =>
+              `<option value="${ea(project.id)}">${e(project.name)}</option>`,
+          )
+          .join("");
+        o.querySelector("#invite-project").closest("label").hidden =
+          !manageableProjects.length;
+        o.querySelector("#invite-username").parentElement.hidden =
+          !manageableProjects.length;
+        o.querySelector(
+          "#invite-username",
+        ).parentElement.previousElementSibling.hidden =
+          !manageableProjects.length;
+        o
+          .querySelector("#invite-project")
+          .closest("label").previousElementSibling.hidden =
+          !manageableProjects.length;
+        o.querySelector("#invite-list").innerHTML =
+          (invites || [])
+            .map(
+              (invite) =>
+                `<div class=invite-row><span>Project invitation · ${e(invite.role)}</span><button class=btn data-accept="${ea(invite.id)}">Accept</button><button class=btn data-decline="${ea(invite.id)}">Decline</button></div>`,
+            )
+            .join("") || "<p class=muted>No pending invitations.</p>";
+        o.querySelectorAll("[data-project]").forEach((button) => {
+          button.onclick = () => {
+            location.href = `index.html?project=${encodeURIComponent(button.dataset.project)}`;
+          };
+        });
+        o.querySelectorAll("[data-accept]").forEach((button) => {
+          button.onclick = async () => {
+            button.disabled = true;
+            const { data: projectId, error } = await supabase.rpc(
+              "accept_clipcanva_project_invite",
+              { invite_id: button.dataset.accept },
+            );
+            if (error) {
+              button.disabled = false;
+              status.textContent = `Could not accept invitation: ${error.message}`;
+              return;
+            }
+            location.href = `index.html?project=${encodeURIComponent(projectId)}`;
+          };
+        });
+        o.querySelectorAll("[data-decline]").forEach((button) => {
+          button.onclick = async () => {
+            button.disabled = true;
+            const { error } = await supabase
+              .from("clipcanva_project_invites")
+              .delete()
+              .eq("id", button.dataset.decline);
+            if (error) {
+              button.disabled = false;
+              status.textContent = `Could not decline invitation: ${error.message}`;
+              return;
+            }
+            await refresh();
+          };
+        });
+      };
+      o.querySelector("#project-create").onclick = async () => {
+        const button = o.querySelector("#project-create");
+        const name = o.querySelector("#project-name").value.trim();
+        if (!name || name.length > 80) {
+          status.textContent = "Project name must be 1–80 characters.";
+          return;
+        }
+        button.disabled = true;
+        const { data: projectId, error } = await supabase.rpc(
+          "create_clipcanva_project",
+          { project_name: name },
+        );
+        if (error) {
+          button.disabled = false;
+          status.textContent = `Could not create project: ${error.message}`;
+          return;
+        }
+        location.href = `index.html?project=${encodeURIComponent(projectId)}`;
+      };
+      o.querySelector("#invite-send").onclick = async () => {
+        const button = o.querySelector("#invite-send");
+        const username = o
+          .querySelector("#invite-username")
+          .value.trim()
+          .replace(/^@/, "")
+          .toLowerCase();
+        if (!/^[a-z0-9][a-z0-9_-]{2,23}$/.test(username)) {
+          status.textContent = "Enter a valid Clipcanva username.";
+          return;
+        }
+        const projectId = o.querySelector("#invite-project").value;
+        if (!projectId) {
+          status.textContent = "Create or select a project first.";
+          return;
+        }
+        button.disabled = true;
+        const { data: invitee, error: profileError } = await supabase
+          .from("clipcanva_profiles")
+          .select("user_id")
+          .eq("username", username)
+          .maybeSingle();
+        if (profileError || !invitee) {
+          status.textContent = profileError
+            ? `Could not search that profile: ${profileError.message}`
+            : "No public profile found for that username.";
+          button.disabled = false;
+          return;
+        }
+        const { error } = await supabase
+          .from("clipcanva_project_invites")
+          .insert({
+            project_id: projectId,
+            inviter_id: SESSION.id,
+            invitee_id: invitee.user_id,
+            role: o.querySelector("#invite-role").value,
+          });
+        button.disabled = false;
+        if (error) {
+          status.textContent = `Could not send invitation: ${error.message}`;
+          return;
+        }
+        status.textContent = `Invitation sent to @${username}.`;
+      };
+      await refresh();
+    } catch (error) {
+      toast(`Team projects are unavailable: ${error.message}`);
+    }
+  }
+  async function refreshSharedProject() {
+    if (!activeProjectId || projectHasConflict) return;
+    const { data: project, error } = await supabase
+      .from("clipcanva_projects")
+      .select("data,updated_at")
+      .eq("id", activeProjectId)
+      .maybeSingle();
+    if (error) {
+      if (Date.now() - projectPollErrorShown > 60000) {
+        projectPollErrorShown = Date.now();
+        toast(`Could not check for project updates: ${error.message}`);
+      }
+      return;
+    }
+    if (!project || project.updated_at === projectUpdatedAt) return;
+    if (saved === "pending" || saved === "syncing") {
+      projectHasConflict = true;
+      saved = "fail";
+      rS();
+      toast(
+        "A teammate updated this project while your edits were pending. Reload to see their version; unsynced local edits will be discarded.",
+        ["Reload project", () => location.reload()],
+      );
+      return;
+    }
+    try {
+      S = await loadCloudWorkspace(project.data);
+      projectUpdatedAt = project.updated_at;
+      last = snap();
+      lastCloudContent = snap();
+      hist = [];
+      fut = [];
+      sel.clear();
+      suppressSave = true;
+      rA();
+      suppressSave = false;
+      await DB.set(JSON.parse(JSON.stringify(S)));
+      saved = "ok";
+      rS();
+      toast("Teammate’s latest changes are in.");
+    } catch (error) {
+      suppressSave = false;
+      toast(`Could not load the latest project version: ${error.message}`);
+    }
+  }
   const A = {
     logout: async () => {
       clearTimeout(st);
@@ -1549,6 +2106,15 @@ if (sessionError || !sessionData.session) {
     fit: () => fit(),
     cap: capModal,
     help: helpModal,
+    community: () => {
+      location.href = "community.html";
+    },
+    profile: profileModal,
+    publish: publishModal,
+    team: teamModal,
+    personal: () => {
+      location.href = "index.html";
+    },
     hist: () => {
       const h = $("#hist");
       h.classList.toggle("o");
@@ -1644,6 +2210,26 @@ if (sessionError || !sessionData.session) {
   document.addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-a]");
     if (b) {
+      if (
+        projectRole === "viewer" &&
+        ![
+          "community",
+          "team",
+          "profile",
+          "personal",
+          "help",
+          "hist",
+          "all",
+          "fav",
+          "zo",
+          "zi",
+          "fit",
+          "copy",
+        ].includes(b.dataset.a)
+      ) {
+        toast("You have viewer access to this project.");
+        return;
+      }
       A[b.dataset.a]?.(b, ev);
       return;
     }
@@ -1677,6 +2263,11 @@ if (sessionError || !sessionData.session) {
     }
   });
   $("#fi").onchange = async (ev) => {
+    if (projectRole === "viewer") {
+      ev.target.value = "";
+      toast("You have viewer access to this project.");
+      return;
+    }
     for (const f of ev.target.files) {
       if (f.name.endsWith(".clipcanva.json")) {
         await importCaptureBundle(f);
@@ -1793,6 +2384,10 @@ if (sessionError || !sessionData.session) {
         sel.has(id) ? sel.delete(id) : sel.add(id);
       } else if (!sel.has(id)) sel = new Set([id]);
       uS();
+      if (projectRole === "viewer") {
+        ptr = null;
+        return;
+      }
       ptr = {
         m: "drag",
         sx,
@@ -1810,6 +2405,10 @@ if (sessionError || !sessionData.session) {
         S.items.filter((i) => i.coll == lb.dataset.c).map((i) => i.id),
       );
       uS();
+      if (projectRole === "viewer") {
+        ptr = null;
+        return;
+      }
       ptr = {
         m: "drag",
         sx,
@@ -1951,6 +2550,7 @@ if (sessionError || !sessionData.session) {
     { passive: false },
   );
   vp.addEventListener("dblclick", (ev) => {
+    if (projectRole === "viewer") return;
     const el = document.elementFromPoint(ev.clientX, ev.clientY),
       it = el && el.closest(".it");
     if (it) {
@@ -1976,6 +2576,7 @@ if (sessionError || !sessionData.session) {
   });
   vp.addEventListener("contextmenu", (ev) => {
     ev.preventDefault();
+    if (projectRole === "viewer") return;
     const it = ev.target.closest(".it"),
       l = ev.target.closest("[data-l]"),
       lb = ev.target.closest(".fr span"),
@@ -2082,6 +2683,10 @@ if (sessionError || !sessionData.session) {
   vp.addEventListener("dragover", (ev) => ev.preventDefault());
   vp.addEventListener("drop", async (ev) => {
     ev.preventDefault();
+    if (projectRole === "viewer") {
+      toast("You have viewer access to this project.");
+      return;
+    }
     const r = vp.getBoundingClientRect(),
       at = {
         x: (ev.clientX - r.left - S.v.x) / S.v.z,
@@ -2097,6 +2702,10 @@ if (sessionError || !sessionData.session) {
   document.addEventListener("paste", async (ev) => {
     if (/INPUT|TEXTAREA/.test(ev.target.tagName)) return;
     ev.preventDefault();
+    if (projectRole === "viewer") {
+      toast("You have viewer access to this project.");
+      return;
+    }
     const d = ev.clipboardData;
     if (!d) return;
     if (d.files.length) {
@@ -2143,6 +2752,17 @@ if (sessionError || !sessionData.session) {
     const ty = /INPUT|TEXTAREA|SELECT/.test(ev.target.tagName),
       m = ev.ctrlKey || ev.metaKey,
       k = ev.key.toLowerCase();
+    if (
+      !ty &&
+      projectRole === "viewer" &&
+      ((m && ["d", "g", "z", "y"].includes(k)) ||
+        ["delete", "backspace", "m", "l", "p", "f"].includes(k) ||
+        k.startsWith("arrow"))
+    ) {
+      ev.preventDefault();
+      toast("You have viewer access to this project.");
+      return;
+    }
     if (ev.key == "Escape") {
       conn = null;
       vp.classList.remove("cn");
@@ -2265,6 +2885,66 @@ if (sessionError || !sessionData.session) {
     $("#account-chip").textContent = SESSION.email;
     saved = "syncing";
     rS();
+    let profileSetupError = null;
+    try {
+      await ensureProfile();
+    } catch (error) {
+      profileSetupError = error;
+    }
+
+    const requestedProject = new URLSearchParams(location.search).get(
+      "project",
+    );
+    if (requestedProject) {
+      if (!/^[0-9a-f-]{36}$/i.test(requestedProject)) {
+        throw new Error("This project link is invalid.");
+      }
+      activeProjectId = requestedProject;
+      const { data: project, error: projectError } = await supabase
+        .from("clipcanva_projects")
+        .select("id,name,owner_id,data,updated_at")
+        .eq("id", activeProjectId)
+        .maybeSingle();
+      if (projectError) throw projectError;
+      if (!project) {
+        throw new Error(
+          "This project is unavailable or your account has not been invited.",
+        );
+      }
+      const { data: membership, error: memberError } = await supabase
+        .from("clipcanva_project_members")
+        .select("role")
+        .eq("project_id", activeProjectId)
+        .eq("user_id", SESSION.id)
+        .maybeSingle();
+      if (memberError) throw memberError;
+      projectRole =
+        membership?.role || (project.owner_id === SESSION.id ? "owner" : null);
+      if (!projectRole) {
+        throw new Error("Your account is not a member of this project.");
+      }
+      projectName = project.name;
+      projectUpdatedAt = project.updated_at;
+      $("#account-chip").textContent = `${project.name} · ${projectRole}`;
+      $("#my-canvas").hidden = false;
+      if (projectRole === "viewer") document.body.classList.add("readonly");
+      S = await loadCloudWorkspace(project.data);
+      await DB.set(JSON.parse(JSON.stringify(S)));
+      last = snap();
+      lastCloudContent = snap();
+      saved = "ok";
+      cloudReady = true;
+      cloudUnavailable = false;
+      rA();
+      if (!S.items.length) fit();
+      window.setInterval(refreshSharedProject, 5000);
+      if (profileSetupError) {
+        toast(
+          `Public profiles and team projects need the sharing migration applied in Supabase. ${profileSetupError.message}`,
+        );
+      }
+      return;
+    }
 
     let remoteWorkspace;
     try {
@@ -2333,6 +3013,7 @@ if (sessionError || !sessionData.session) {
       try {
         await DB.set(JSON.parse(JSON.stringify(S)));
         await syncCloudWorkspace(S);
+        lastCloudContent = snap();
         saved = "ok";
       } catch (error) {
         saved = "fail";
@@ -2348,6 +3029,7 @@ if (sessionError || !sessionData.session) {
       if (removedStarterWorkspace) {
         try {
           await syncCloudWorkspace(S);
+          lastCloudContent = snap();
           saved = "ok";
           toast("Starter items removed. Your canvas is ready.");
         } catch (error) {
@@ -2359,8 +3041,14 @@ if (sessionError || !sessionData.session) {
       }
     }
     last = snap();
+    lastCloudContent = snap();
     rA();
     if (!S.items.length) fit();
+    if (profileSetupError) {
+      toast(
+        `Public profiles and team projects need the sharing migration applied in Supabase. ${profileSetupError.message}`,
+      );
+    }
     try {
       const p = await navigator.permissions.query({
         name: "clipboard-read",

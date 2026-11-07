@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#070708" />
+    <meta
+      name="description"
+      content="A Clipcanva canvas shared by its creator."
+    />
+    <title>Published canvas — Clipcanva</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="community.css" />
+    <link rel="stylesheet" href="canvas.css" />
+    <script src="supabase-config.js"></script>
+    <script type="module" src="canvas.js"></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="community.html"><span>C</span> Clipcanva</a>
+      <a class="back" href="community.html">Discover creators</a>
+    </header>
+    <main>
+      <section class="intro">
+        <p class="eyebrow">PUBLISHED CANVAS</p>
+        <h1 id="title">Loading canvas…</h1>
+        <p id="owner"></p>
+      </section>
+      <p id="status" role="status" aria-live="polite"></p>
+      <section id="items" class="items" aria-label="Canvas objects"></section>
+    </main>
+  </body>
+</html>

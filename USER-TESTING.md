@@ -14,6 +14,8 @@ downloaded bundle.
 - Confirm the Supabase migration and local auth redirect URL are configured.
   Have participants create and confirm their own account; never collect their
   passwords.
+- Apply both Supabase migrations in timestamp order before testing discovery,
+  publishing, or team projects.
 - For the tab-capture task, install the unpacked Chromium extension using
   [browser-extension/README.md](./browser-extension/README.md). Otherwise,
   provide a non-sensitive sample screenshot for import.
@@ -47,6 +49,12 @@ downloaded bundle.
 6. **Trust and value:** Ask whether they understand that their canvas is saved
    to their private account, that extension captures require a click, and what
    would make them comfortable using the product with real work.
+7. **Sharing:** Ask them to edit their public username, publish a sample canvas,
+   open its public link in a signed-out browser, then unpublish it.
+8. **Collaboration:** Use a second test account to search the first account by
+   username. Invite it as a viewer, accept from the second account, and confirm
+   it can view but cannot edit. Repeat with an editor account and verify that
+   edits appear in the first account's project.
 
 ## Record without coaching
 
@@ -54,6 +62,8 @@ For each participant, note:
 
 - Their own one-sentence description of Clipcanva and who it is for.
 - Whether they understood that screenshot capture requires an explicit action.
+- Whether they understood that publishing exposes the canvas and its images on
+  their public profile, while private team projects are invitation-only.
 - Whether they found source attribution and collection organization without
   help.
 - Any hesitation, failed action, or expectation that differed from what the
