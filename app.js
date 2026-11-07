@@ -60,8 +60,6 @@ if (sessionError || !sessionData.session) {
     redo: '<path d="M21 7v6h-6M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>',
     help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
     up: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
-    shield:
-      '<path d="M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.6 0C7.500 20.500 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.500-1.200 6.200-2.700a1.200 1.200 0 0 1 1.500 0C14.500 3.800 17 5 19 5a1 1 0 0 1 1 1z"/>',
     grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
     users:
       '<path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
@@ -158,7 +156,6 @@ if (sessionError || !sessionData.session) {
     cloudUnavailable = false,
     syncQueue = Promise.resolve(),
     saveVersion = 0;
-  let cap = { auto: false, state: "manual", lastTxt: "" };
   const contentSnapshot = (workspace = S) =>
     JSON.stringify({
       items: workspace.items,
@@ -268,16 +265,21 @@ if (sessionError || !sessionData.session) {
         await syncQueue;
         lastCloudContent = cloudContent;
         if (version === saveVersion) saved = "ok";
+        rS();
         if (Date.now() - lastActivityAt > 30000) {
           lastActivityAt = Date.now();
-          const { error: activityError } = await supabase.rpc(
-            "record_clipcanva_activity",
-          );
-          if (activityError && Date.now() - activityErrorShown > 60000) {
-            activityErrorShown = Date.now();
-            toast(
-              `Canvas saved, but activity could not be recorded: ${activityError.message}`,
+          try {
+            const { error: activityError } = await supabase.rpc(
+              "record_clipcanva_activity",
             );
+            if (activityError) throw activityError;
+          } catch (activityError) {
+            if (Date.now() - activityErrorShown > 60000) {
+              activityErrorShown = Date.now();
+              toast(
+                `Canvas saved, but activity could not be recorded: ${activityError.message}`,
+              );
+            }
           }
         }
       } catch (error) {
@@ -950,22 +952,11 @@ if (sessionError || !sessionData.session) {
       `<select class=pill id=dt title="Filter by date" style="background:var(--b)"><option value=any>Any time</option><option value=hour${F.date == "hour" ? " selected" : ""}>Last hour</option><option value=today${F.date == "today" ? " selected" : ""}>Last 24 hours</option></select>`;
   }
   function rS() {
-    const m = {
-      manual: [
-        "",
-        projectRole === "viewer"
-          ? `Shared project · ${projectName}`
-          : activeProjectId
-            ? `Shared project · ${projectName}`
-            : "Clipboard capture · paste anytime",
-      ],
-      armed: ["g", "Auto-capture on tab focus"],
-      granted: ["g", "Clipboard allowed · manual"],
-      denied: ["r", "Clipboard access blocked"],
-      unsupported: ["y", "Clipboard read unsupported here"],
-    }[cap.state];
+    const workspaceLabel = activeProjectId
+      ? `Shared project · ${projectName}`
+      : "Private workspace";
     $("#sb").innerHTML =
-      `<button class="${m[0]}" data-a="cap" title="Capture clipboard text or images"><i></i>${m[1]}</button><div class="${saved == "ok" ? "g" : saved == "fail" ? "r" : "y"}"><i></i>${saved == "ok" ? "Synced to cloud" : saved == "fail" ? "Cloud sync failed · saved locally" : "Syncing…"}</div><div>${S.items.length} objects${sel.size ? " · " + sel.size + " selected" : ""}</div>`;
+      `<div>${workspaceLabel}</div><div class="${saved == "ok" ? "g" : saved == "fail" ? "r" : "y"}"><i></i>${saved == "ok" ? "Synced to cloud" : saved == "fail" ? "Cloud sync failed · saved locally" : "Syncing…"}</div><div>${S.items.length} objects${sel.size ? " · " + sel.size + " selected" : ""}</div>`;
   }
   function rH() {
     $("#hist").innerHTML =
@@ -1247,8 +1238,7 @@ if (sessionError || !sessionData.session) {
     return ["text", { content: t }];
   }
   function addText(t, at) {
-    if (!t || !t.trim() || t == cap.lastTxt) return false;
-    cap.lastTxt = t;
+    if (!t || !t.trim()) return false;
     const [k, p] = classify(t);
     spawn(k, p, at);
     return true;
@@ -1289,99 +1279,12 @@ if (sessionError || !sessionData.session) {
       }
     });
   }
-  async function importCaptureBundle(file) {
-    if (file.size > 50e6) {
-      toast("Capture bundle is over 50 MB and was not imported");
-      return;
-    }
-    let bundle;
-    try {
-      bundle = JSON.parse(await file.text());
-    } catch {
-      toast("This capture bundle is not valid JSON");
-      return;
-    }
-    if (
-      bundle?.app !== "clipcanva" ||
-      bundle.version !== 1 ||
-      !Array.isArray(bundle.captures) ||
-      bundle.captures.length < 1 ||
-      bundle.captures.length > 10
-    ) {
-      toast("This is not a supported Clipcanva capture bundle");
-      return;
-    }
-    const valid = bundle.captures.filter((capture) => {
-      if (
-        typeof capture?.image !== "string" ||
-        capture.image.length > 11_200_000 ||
-        !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(capture.image)
-      )
-        return false;
-      const encoded = capture.image.slice("data:image/png;base64,".length);
-      if (Math.floor((encoded.length * 3) / 4) > 8e6) return false;
-      try {
-        const protocol = new URL(capture.sourceUrl).protocol;
-        return protocol == "http:" || protocol == "https:";
-      } catch {
-        return false;
-      }
-    });
-    const rejected = bundle.captures.length - valid.length;
-    if (!valid.length) {
-      toast("No valid screenshots were found in this bundle");
-      return;
-    }
-    const ids = [];
-    let unreadable = 0;
-    for (const capture of valid) {
-      const sourceUrl = new URL(capture.sourceUrl).origin;
-      const image = new Image();
-      image.src = capture.image;
-      try {
-        await image.decode();
-      } catch {
-        unreadable++;
-        continue;
-      }
-      const item = spawn(
-        "image",
-        {
-          title: `Screenshot · ${String(capture.title || sourceHost(sourceUrl)).slice(0, 120)}`,
-          src: capture.image,
-          dims: `${image.naturalWidth} × ${image.naturalHeight}`,
-          size: Math.floor(
-            (capture.image.length - "data:image/png;base64,".length) * 0.75,
-          ),
-          sourceUrl,
-          tags: ["screenshot", "design-reference"],
-          t: Number.isFinite(capture.capturedAt)
-            ? capture.capturedAt
-            : Date.now(),
-        },
-        undefined,
-        true,
-      );
-      ids.push(item.id);
-    }
-    if (!ids.length) {
-      toast("The screenshots could not be decoded; nothing was imported");
-      return;
-    }
-    sel = new Set(ids);
-    commit();
-    const skipped = rejected + unreadable;
-    toast(
-      `Imported ${ids.length} screenshot${ids.length == 1 ? "" : "s"} with source details${skipped ? ` · skipped ${skipped} invalid or unreadable` : ""}`,
-    );
-  }
   async function copyItem(i) {
     try {
       if (i.type == "image") {
         const b = await (await fetch(i.src)).blob();
         await navigator.clipboard.write([new ClipboardItem({ [b.type]: b })]);
       } else {
-        cap.lastTxt = i.content;
         await navigator.clipboard.writeText(i.content || i.title);
       }
       toast("Copied to clipboard");
@@ -1390,46 +1293,6 @@ if (sessionError || !sessionData.session) {
         "Copy was blocked by the browser. Select the text in the inspector and use Ctrl/⌘+C.",
       );
     }
-  }
-  async function readClip(silent) {
-    try {
-      let got = 0;
-      if (navigator.clipboard?.read) {
-        for (const it of await navigator.clipboard.read()) {
-          const ty = it.types.find((t) => t.startsWith("image/"));
-          if (ty) {
-            const b = await it.getType(ty),
-              k = "img" + b.size;
-            if (k == cap.lastTxt) continue;
-            cap.lastTxt = k;
-            await addFile(new File([b], "Clipboard image", { type: ty }));
-            got++;
-          } else if (
-            it.types.includes("text/plain") &&
-            addText(await (await it.getType("text/plain")).text())
-          )
-            got++;
-        }
-      } else if (navigator.clipboard?.readText) {
-        if (addText(await navigator.clipboard.readText())) got++;
-      } else throw { name: "NotSupportedError" };
-      cap.state = cap.auto ? "armed" : "granted";
-      if (!silent)
-        toast(
-          got
-            ? `Captured ${got} item${got > 1 ? "s" : ""}`
-            : "Clipboard is empty or already captured",
-        );
-    } catch (er) {
-      cap.state = er.name == "NotAllowedError" ? "denied" : "unsupported";
-      if (!silent)
-        toast(
-          cap.state == "denied"
-            ? "Clipboard access was blocked. Allow it in the site settings, or paste with Ctrl/⌘+V."
-            : "This browser cannot read the clipboard. Use Ctrl/⌘+V to paste.",
-        );
-    }
-    rS();
   }
   function delItems(ids) {
     const n = ids.length;
@@ -1587,26 +1450,6 @@ if (sessionError || !sessionData.session) {
       y: (r.height - (y2 - y1) * z) / 2 - y1 * z,
     });
   }
-  function capModal() {
-    const o =
-      modal(`<h2>Clipboard capture · text &amp; images</h2><p>Browsers cannot watch your clipboard in the background. Clipcanva reads it only when you ask, after you grant permission, and only while this tab is open and focused.</p>
- <p style="margin-bottom:0">Status: <b style="color:#fff">${{ manual: "Not requested yet", armed: "Auto-capture on tab focus", granted: "Permission granted", denied: "Blocked by browser or embedding page", unsupported: "Not supported here" }[cap.state]}</b></p>
- <label class=ck><input type=checkbox id=au ${cap.auto ? "checked" : ""}>Capture new clipboard content whenever I return to this tab</label>
- <div class=row><button class=btn id=cl>Close</button><button class="btn p" id=rd>Allow &amp; read clipboard now</button></div><p style="margin:14px 0 0;font-size:12.5px">Webpage screenshots: use the <a href="browser-extension/README.md" target="_blank" rel="noopener">Clipcanva browser extension</a> to capture the active tab, download its bundle, then use Add → Import files. A website cannot detect OS screenshots or screenshots taken by other apps.</p><p style="margin:8px 0 0;font-size:12.5px">For clipboard content: press Ctrl/⌘+V on the canvas, drop files, or use Add → Import files.</p>`);
-    o.querySelector("#cl").onclick = () => o.remove();
-    o.querySelector("#au").onchange = (ev) => {
-      cap.auto = ev.target.checked;
-      if (cap.auto) readClip();
-      else {
-        cap.state = "manual";
-        rS();
-      }
-    };
-    o.querySelector("#rd").onclick = async () => {
-      await readClip();
-      o.remove();
-    };
-  }
   function helpModal() {
     const k = [
       ["Ctrl/⌘ + V", "Paste text, images, files"],
@@ -1641,7 +1484,7 @@ if (sessionError || !sessionData.session) {
     try {
       const profile = await ensureProfile();
       const o = modal(
-        `<h2>Your public profile</h2><p>Your profile includes published collections, public projects, followers, and a GitHub-style activity graph. Your email and private work stay hidden.</p><label>Username<input id=profile-username value="${ea(profile.username)}" maxlength=24 autocomplete=off></label><label>Display name<input id=profile-name value="${ea(profile.display_name)}" maxlength=60></label><p id=profile-status role=status></p><div class=row><button class=btn id=profile-cancel>Cancel</button><button class=btn id=profile-view>View profile</button><button class="btn p" id=profile-save>Save profile</button></div>`,
+        `<h2>Your public profile</h2><p>Your profile can show published collections, public projects, followers, and activity. Your email and private work stay hidden.</p><label>Username<input id=profile-username value="${ea(profile.username)}" maxlength=24 autocomplete=off></label><label>Display name<input id=profile-name value="${ea(profile.display_name)}" maxlength=60></label><p id=profile-status role=status></p><div class=row><button class=btn id=profile-cancel>Cancel</button><button class=btn id=profile-view>View profile</button><button class="btn p" id=profile-save>Save profile</button></div>`,
       );
       o.querySelector("#profile-cancel").onclick = () => o.remove();
       o.querySelector("#profile-view").onclick = () => {
@@ -1669,21 +1512,50 @@ if (sessionError || !sessionData.session) {
         }
         const button = o.querySelector("#profile-save");
         button.disabled = true;
-        const { error } = await supabase
-          .from("clipcanva_profiles")
-          .update({
-            username,
-            display_name: displayName,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("user_id", SESSION.id);
-        button.disabled = false;
-        if (error) {
+        try {
+          const { data: existingProfile, error: availabilityError } =
+            await supabase
+              .from("clipcanva_profiles")
+              .select("user_id")
+              .eq("username", username)
+              .neq("user_id", SESSION.id)
+              .maybeSingle();
+          if (availabilityError) {
+            message.textContent = `Could not check username availability: ${availabilityError.message}`;
+            return;
+          }
+          if (existingProfile) {
+            message.textContent =
+              "That username is already taken. Try another one.";
+            o.querySelector("#profile-username").focus();
+            return;
+          }
+
+          const { error } = await supabase
+            .from("clipcanva_profiles")
+            .update({
+              username,
+              display_name: displayName,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("user_id", SESSION.id);
+          if (error) {
+            if (error.code === "23505") {
+              message.textContent =
+                "That username is already taken. Try another one.";
+              o.querySelector("#profile-username").focus();
+            } else {
+              message.textContent = `Profile could not be saved: ${error.message}`;
+            }
+            return;
+          }
+          o.remove();
+          toast("Public profile updated");
+        } catch (error) {
           message.textContent = `Profile could not be saved: ${error.message}`;
-          return;
+        } finally {
+          button.disabled = false;
         }
-        o.remove();
-        toast("Public profile updated");
       };
     } catch (error) {
       toast(`Public profiles are unavailable: ${error.message}`);
@@ -2212,7 +2084,6 @@ if (sessionError || !sessionData.session) {
       zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.2);
     },
     fit: () => fit(),
-    cap: capModal,
     help: helpModal,
     community: () => {
       location.href = "community.html";
@@ -2308,11 +2179,15 @@ if (sessionError || !sessionData.session) {
             }),
         ],
         "-",
-        ["Paste from clipboard", () => readClip(), "Ctrl+V"],
+        [
+          "Paste from clipboard",
+          () => toast("Press Ctrl/⌘+V to paste from your clipboard."),
+          "Ctrl+V",
+        ],
         ["Import files…", () => $("#fi").click()],
       ]);
     },
-    paste: () => readClip(),
+    paste: () => toast("Press Ctrl/⌘+V to paste from your clipboard."),
     import: () => $("#fi").click(),
   };
   document.addEventListener("click", (ev) => {
@@ -2376,13 +2251,7 @@ if (sessionError || !sessionData.session) {
       toast("You have viewer access to this project.");
       return;
     }
-    for (const f of ev.target.files) {
-      if (f.name.endsWith(".clipcanva.json")) {
-        await importCaptureBundle(f);
-      } else {
-        await addFile(f);
-      }
-    }
+    for (const f of ev.target.files) await addFile(f);
     ev.target.value = "";
   };
   $("#q").oninput = (ev) => {
@@ -2763,16 +2632,8 @@ if (sessionError || !sessionData.session) {
     }
     menu(ev.clientX, ev.clientY, [
       [
-        "Paste here",
-        async () => {
-          try {
-            const t = await navigator.clipboard.readText();
-            if (!addText(t, at))
-              toast("Clipboard is empty or already captured");
-          } catch {
-            toast("Paste blocked. Press Ctrl/⌘+V instead.");
-          }
-        },
+        "Paste here · Ctrl/⌘+V",
+        () => toast("Press Ctrl/⌘+V to paste at the selected canvas position."),
       ],
       ["New text", () => spawn("text", { content: "New note" }, at)],
       ["New color", () => spawn("color", { content: "#4c8dff" }, at)],
@@ -2822,9 +2683,6 @@ if (sessionError || !sessionData.session) {
     }
     const t = d.getData("text/plain");
     if (!addText(t)) toast("Nothing new to paste");
-  });
-  addEventListener("focus", () => {
-    if (cap.auto) readClip(true);
   });
   let pvT;
   $("#o").addEventListener("mouseover", (ev) => {
@@ -3165,13 +3023,6 @@ if (sessionError || !sessionData.session) {
         `Public profiles and team projects need the sharing migration applied in Supabase. ${profileSetupError.message}`,
       );
     }
-    try {
-      const p = await navigator.permissions.query({
-        name: "clipboard-read",
-      });
-      if (p.state == "denied") cap.state = "denied";
-      rS();
-    } catch {}
   })().catch((error) => {
     saved = "fail";
     rS();

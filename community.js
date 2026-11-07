@@ -102,9 +102,14 @@ function showActivity(rows) {
   }
   const levelFor = (count) =>
     count === 0 ? 0 : count === 1 ? 1 : count <= 3 ? 2 : count <= 6 ? 3 : 4;
-  const graph = $("#activity-graph");
-  graph.innerHTML = `<div class="activity-graph-wrap"><div class="activity-grid" role="img" aria-label="Daily Clipcanva activity over the past year">${days.map(({ date, count, weekday }) => `<span class="activity-day" data-level="${levelFor(count)}" style="grid-row:${weekday + 1}" title="${count} contribution${count === 1 ? "" : "s"} on ${date}"></span>`).join("")}</div></div><div class="activity-legend">Less <i class="activity-day" data-level="0"></i><i class="activity-day" data-level="1"></i><i class="activity-day" data-level="2"></i><i class="activity-day" data-level="3"></i><i class="activity-day" data-level="4"></i> More</div>`;
-  $("#activity-total").textContent = `${total} contributions in the past year`;
+  $("#activity-graph").innerHTML =
+    `<div class="activity-graph-wrap"><div class="activity-grid" role="img" aria-label="Daily Clipcanva activity over the past year">${days
+      .map(
+        ({ date, count, weekday }) =>
+          `<span class="activity-day" data-level="${levelFor(count)}" style="grid-row:${weekday + 1}" title="${count} saved change${count === 1 ? "" : "s"} on ${date}"></span>`,
+      )
+      .join("")}</div></div><div class="activity-legend">Less <i class="activity-day" data-level="0"></i><i class="activity-day" data-level="1"></i><i class="activity-day" data-level="2"></i><i class="activity-day" data-level="3"></i><i class="activity-day" data-level="4"></i> More</div>`;
+  $("#activity-total").textContent = `${total} saved changes in the past year`;
 }
 
 async function showRelations(userId, kind) {
@@ -207,7 +212,6 @@ async function loadProfile(handle) {
   ]);
   if (boardsError) throw boardsError;
   if (projectsError) throw projectsError;
-  if (activityError) throw activityError;
   if (followersError) throw followersError;
   if (followingError) throw followingError;
   if (sessionError) throw sessionError;
@@ -259,7 +263,14 @@ async function loadProfile(handle) {
         status.textContent = `Could not refresh profile: ${error.message}`;
       });
     });
-  showActivity(activity || []);
+  if (activityError) {
+    $("#activity-graph").textContent =
+      "Activity is temporarily unavailable.";
+    $("#activity-total").textContent = "";
+    console.error("Could not load profile activity:", activityError);
+  } else {
+    showActivity(activity || []);
+  }
   showBoards(boards || []);
   showProjects(projects || []);
   status.textContent = "";

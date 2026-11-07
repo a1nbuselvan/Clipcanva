@@ -162,7 +162,6 @@ svg.i {
 body.readonly [data-a="add"],
 body.readonly [data-a="undo"],
 body.readonly [data-a="redo"],
-body.readonly [data-a="cap"],
 body.readonly [data-a="publish"],
 body.readonly [data-a="newco"] {
   display: none;
