@@ -33,6 +33,13 @@ function safePublishedImageURL(value) {
   return url?.startsWith(prefix) ? url : "";
 }
 
+function safeProjectImageURL(value) {
+  const projectURL = window.CLIPCANVA_SUPABASE_CONFIG?.url?.replace(/\/$/, "");
+  const prefix = `${projectURL}/storage/v1/object/sign/clipcanva-assets/`;
+  const url = safeWebURL(value);
+  return url?.startsWith(prefix) ? url : "";
+}
+
 function sourceHostname(value) {
   const url = safeWebURL(value);
   return url ? new URL(url).hostname : "";
@@ -50,8 +57,9 @@ function objectCard(item) {
   const color = colors[item.type] || colors.text;
   let body = "";
   const publicImageURL = safePublishedImageURL(item.publicSrc);
-  if (item.type === "image" && publicImageURL) {
-    body = `<img src="${escapeHTML(publicImageURL)}" alt="${escapeHTML(item.title || "Published image")}" loading="lazy">`;
+  const projectImageURL = safeProjectImageURL(item.src);
+  if (item.type === "image" && (publicImageURL || projectImageURL)) {
+    body = `<img src="${escapeHTML(publicImageURL || projectImageURL)}" alt="${escapeHTML(item.title || "Shared image")}" loading="lazy">`;
   } else if (item.type === "link") {
     const url = safeWebURL(item.content);
     body = url
@@ -72,7 +80,45 @@ function objectCard(item) {
 }
 
 async function loadCanvas() {
-  const id = new URLSearchParams(location.search).get("id");
+  const params = new URLSearchParams(location.search);
+  const projectId = params.get("project");
+  if (projectId) {
+    if (!/^[0-9a-f-]{36}$/i.test(projectId)) {
+      throw new Error("This project link is invalid.");
+    }
+    const { data: project, error } = await supabase
+      .from("clipcanva_projects")
+      .select("id,owner_id,name,data,visibility")
+      .eq("id", projectId)
+      .eq("visibility", "public")
+      .maybeSingle();
+    if (error) throw error;
+    if (!project) throw new Error("This project is private or unavailable.");
+    const items = project.data.items;
+    for (const item of items) {
+      if (item.type !== "image" || !item.storagePath) continue;
+      const { data, error: imageError } = await supabase.storage
+        .from("clipcanva-assets")
+        .createSignedUrl(item.storagePath, 10 * 60);
+      if (imageError) throw imageError;
+      item.src = data.signedUrl;
+    }
+    const { data: profile, error: profileError } = await supabase
+      .from("clipcanva_profiles")
+      .select("username")
+      .eq("user_id", project.owner_id)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    document.title = `${project.name} — Clipcanva`;
+    $("#title").textContent = project.name;
+    $("#owner").innerHTML = profile
+      ? `Public team project · owned by <a href="community.html?user=${encodeURIComponent(profile.username)}">@${escapeHTML(profile.username)}</a>`
+      : "Public team project on Clipcanva";
+    $("#items").innerHTML = items.map(objectCard).join("");
+    status.textContent = `${items.length} shared object${items.length === 1 ? "" : "s"} · view only`;
+    return;
+  }
+  const id = params.get("id");
   if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
     throw new Error("This canvas link is invalid.");
   }

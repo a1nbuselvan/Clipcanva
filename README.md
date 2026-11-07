@@ -24,7 +24,9 @@ Open [http://localhost:8000/auth.html](http://localhost:8000/auth.html).
    Editor, run the files in timestamp order:
    [private workspace and storage](./supabase/migrations/20261107173000_create_clipcanva_cloud.sql),
    then
-   [profiles, publishing, and collaboration](./supabase/migrations/20261107190000_add_profiles_sharing_and_collaboration.sql).
+   [profiles, publishing, and collaboration](./supabase/migrations/20261107190000_add_profiles_sharing_and_collaboration.sql),
+   then
+   [collection publishing, public projects, follows, and activity](./supabase/migrations/20261107193000_collection_publishing_social_activity.sql).
 4. In Supabase **Authentication → URL Configuration**, set the site URL to
    `http://localhost:8000` and add `http://localhost:8000/**` to the redirect
    URL allow list. Set these to the production HTTPS domain when deploying.
@@ -46,16 +48,26 @@ file or commit one to the repository.**
 - Public profiles expose only a username and display name; account email is
   never included in public profile queries. Profiles are discoverable by
   username.
-- Publishing is an explicit action. It publishes the current canvas to the
-  owner's public profile and copies its images to `clipcanva-public-assets`.
-  Unpublishing hides the canvas and attempts to remove those public images.
-- Team projects are private and invitation-only. Owners and editors can make
-  changes; viewers are read-only. Project canvases check for teammate updates
-  every five seconds and reject stale edits rather than overwriting a newer
-  saved version. This is asynchronous collaboration, not simultaneous live
-  cursors.
-- New accounts start with a blank canvas and can create objects, paste
-  clipboard content, or import files immediately. Existing untouched demo
+- New accounts start with a blank canvas and no collections. Create a
+  collection when you want to organize objects; new objects remain ungrouped
+  unless a collection is selected.
+- Publishing is an explicit action. Choose a collection to publish; only that
+  collection's objects are copied to the public profile. Other collections and
+  the private canvas remain private. Unpublishing hides that collection's
+  public page and attempts to remove its public images.
+- Team projects are separate canvases with a Private or Public setting. Private
+  projects are invite-only; anyone can view a Public project, but only invited
+  Editors can change it. Viewers are read-only. Project canvases check for
+  teammate updates every five seconds and reject stale edits rather than
+  overwriting a newer saved version. This is asynchronous collaboration, not
+  simultaneous live cursors. Image preview links that were already issued can
+  remain valid for up to 10 minutes after a project is made private.
+- Profiles can follow creators and show followers, following, published
+  collections, public projects, and a GitHub-style daily activity graph. Email
+  stays private. Activity totals are based on successful saved changes.
+- Existing publications are hidden by the collection-sharing migration. Review
+  them and explicitly republish the collection you want public.
+- Existing untouched demo
   canvases from earlier versions are cleared automatically; other local preview
   canvases require confirmation before they are uploaded to private storage.
 - The browser keeps a local cache for offline recovery. A “Cloud sync failed”
@@ -70,7 +82,8 @@ file or commit one to the repository.**
 - `canvas.html`, `canvas.css`, `canvas.js` — published canvas viewer
 - `auth.html`, `auth.css`, `auth.js` — Supabase sign-up, login, and password reset
 - `supabase-config.js`, `supabase-client.js` — public client configuration
-- `supabase/migrations/` — workspace schema, private storage bucket, and RLS
+- `supabase/migrations/` — workspace, sharing, collection publishing, social
+  features, storage buckets, and RLS
 - `browser-extension/` — click-to-capture Chromium extension
 - `USER-TESTING.md` — guide for first user sessions
 

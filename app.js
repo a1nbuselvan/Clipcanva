@@ -11,6 +11,8 @@ let projectHasConflict = false;
 let suppressSave = false;
 let lastCloudContent = "";
 let projectPollErrorShown = 0;
+let activityErrorShown = 0;
+let lastActivityAt = 0;
 let publicCanvas = null;
 const { data: sessionData, error: sessionError } =
   await supabase.auth.getSession();
@@ -266,6 +268,18 @@ if (sessionError || !sessionData.session) {
         await syncQueue;
         lastCloudContent = cloudContent;
         if (version === saveVersion) saved = "ok";
+        if (Date.now() - lastActivityAt > 30000) {
+          lastActivityAt = Date.now();
+          const { error: activityError } = await supabase.rpc(
+            "record_clipcanva_activity",
+          );
+          if (activityError && Date.now() - activityErrorShown > 60000) {
+            activityErrorShown = Date.now();
+            toast(
+              `Canvas saved, but activity could not be recorded: ${activityError.message}`,
+            );
+          }
+        }
       } catch (error) {
         if (version === saveVersion) saved = "fail";
         toast(
@@ -1193,7 +1207,7 @@ if (sessionError || !sessionData.session) {
       tags: [],
       fav: 0,
       pin: 0,
-      coll: null,
+      coll: F.coll || null,
       t: Date.now(),
       ...p,
     };
@@ -1627,9 +1641,16 @@ if (sessionError || !sessionData.session) {
     try {
       const profile = await ensureProfile();
       const o = modal(
-        `<h2>Your public profile</h2><p>Your username and display name can be found in Creator search. Your email stays private.</p><label>Username<input id=profile-username value="${ea(profile.username)}" maxlength=24 autocomplete=off></label><label>Display name<input id=profile-name value="${ea(profile.display_name)}" maxlength=60></label><p id=profile-status role=status></p><div class=row><button class=btn id=profile-cancel>Cancel</button><button class="btn p" id=profile-save>Save profile</button></div>`,
+        `<h2>Your public profile</h2><p>Your profile includes published collections, public projects, followers, and a GitHub-style activity graph. Your email and private work stay hidden.</p><label>Username<input id=profile-username value="${ea(profile.username)}" maxlength=24 autocomplete=off></label><label>Display name<input id=profile-name value="${ea(profile.display_name)}" maxlength=60></label><p id=profile-status role=status></p><div class=row><button class=btn id=profile-cancel>Cancel</button><button class=btn id=profile-view>View profile</button><button class="btn p" id=profile-save>Save profile</button></div>`,
       );
       o.querySelector("#profile-cancel").onclick = () => o.remove();
+      o.querySelector("#profile-view").onclick = () => {
+        window.open(
+          `community.html?user=${encodeURIComponent(profile.username)}`,
+          "_blank",
+          "noopener",
+        );
+      };
       o.querySelector("#profile-save").onclick = async () => {
         const username = o
           .querySelector("#profile-username")
@@ -1678,12 +1699,13 @@ if (sessionError || !sessionData.session) {
       return null;
     }
   }
-  async function publishCurrentCanvas(title) {
+  async function publishCurrentCanvas(title, collectionId) {
     const profile = await ensureProfile();
     const { data: existing, error: existingError } = await supabase
       .from("clipcanva_public_canvases")
       .select("id,data")
       .eq("user_id", SESSION.id)
+      .eq("collection_id", collectionId)
       .maybeSingle();
     if (existingError) throw existingError;
     const canvasId = existing?.id || crypto.randomUUID();
@@ -1691,6 +1713,18 @@ if (sessionError || !sessionData.session) {
       .map((item) => publicAssetPath(item.publicSrc || ""))
       .filter(Boolean);
     const workspace = JSON.parse(JSON.stringify(S));
+    const collection = workspace.colls.find(
+      (entry) => entry.id === collectionId,
+    );
+    if (!collection) throw new Error("Choose a collection to publish.");
+    workspace.items = workspace.items.filter(
+      (item) => item.coll === collectionId,
+    );
+    const itemIds = new Set(workspace.items.map((item) => item.id));
+    workspace.links = workspace.links.filter(
+      (link) => itemIds.has(link.a) && itemIds.has(link.b),
+    );
+    workspace.colls = [collection];
     const retainedPaths = [];
     let published;
     try {
@@ -1743,13 +1777,15 @@ if (sessionError || !sessionData.session) {
           {
             id: canvasId,
             user_id: SESSION.id,
+            collection_id: collectionId,
+            collection_name: collection.name,
             title: title.trim(),
             data: workspace,
             is_public: true,
             published_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
-          { onConflict: "user_id" },
+          { onConflict: "user_id,collection_id" },
         )
         .select("id,title,data")
         .single();
@@ -1795,19 +1831,49 @@ if (sessionError || !sessionData.session) {
   async function publishModal() {
     try {
       const profile = await ensureProfile();
-      const { data, error } = await supabase
+      const { data: publications, error } = await supabase
         .from("clipcanva_public_canvases")
-        .select("id,title,data,is_public")
-        .eq("user_id", SESSION.id)
-        .maybeSingle();
+        .select("id,title,data,is_public,collection_id")
+        .eq("user_id", SESSION.id);
       if (error) throw error;
-      publicCanvas = data;
-      const o = modal(
-        `<h2>Publish this canvas</h2><p>Publishing makes this canvas and its images visible to everyone on your public profile. Your email and private workspace remain hidden. You can unpublish it anytime.</p><label>Canvas title<input id=publish-title maxlength=100 value="${ea(data?.title || `${profile.display_name}'s canvas`)}"></label><p id=publish-status role=status></p><div class=row><button class=btn id=publish-cancel>Cancel</button>${data?.is_public ? '<button class="btn" id=unpublish>Unpublish</button>' : ""}<button class="btn p" id=publish-confirm>${data?.is_public ? "Update public canvas" : "Publish canvas"}</button></div>`,
+      const collections = S.colls;
+      const defaultCollection =
+        collections.find((collection) => collection.id === F.coll) ||
+        collections[0];
+      if (!defaultCollection)
+        throw new Error("Create a collection before publishing.");
+      const publicationByCollection = new Map(
+        (publications || []).map((entry) => [entry.collection_id, entry]),
       );
+      const initialPublication = publicationByCollection.get(
+        defaultCollection.id,
+      );
+      publicCanvas = initialPublication || null;
+      const o = modal(
+        `<h2>Publish a collection</h2><p>Choose one collection to share on your public profile. Only items in that collection will be visible; your private canvas and other collections stay private.</p><label>Collection<select id=publish-collection>${collections.map((collection) => `<option value="${ea(collection.id)}">${e(collection.name)}</option>`).join("")}</select></label><label>Public title<input id=publish-title maxlength=100 value="${ea(initialPublication?.title || defaultCollection.name)}"></label><p id=publish-status role=status></p><div class=row><button class=btn id=publish-cancel>Cancel</button><button class=btn id=unpublish ${initialPublication?.is_public ? "" : "hidden"}>Unpublish</button><button class="btn p" id=publish-confirm>${initialPublication?.is_public ? "Update published collection" : "Publish collection"}</button></div>`,
+      );
+      const collectionSelect = o.querySelector("#publish-collection");
+      const titleInput = o.querySelector("#publish-title");
+      const publishButton = o.querySelector("#publish-confirm");
+      const unpublishButton = o.querySelector("#unpublish");
+      const syncPublicationControls = () => {
+        const selected = publicationByCollection.get(collectionSelect.value);
+        publicCanvas = selected || null;
+        titleInput.value =
+          selected?.title ||
+          collections.find((item) => item.id === collectionSelect.value)
+            ?.name ||
+          "";
+        publishButton.textContent = selected?.is_public
+          ? "Update published collection"
+          : "Publish collection";
+        unpublishButton.hidden = !selected?.is_public;
+      };
+      collectionSelect.addEventListener("change", syncPublicationControls);
       o.querySelector("#publish-cancel").onclick = () => o.remove();
       o.querySelector("#publish-confirm").onclick = async () => {
         const title = o.querySelector("#publish-title").value.trim();
+        const collectionId = collectionSelect.value;
         const message = o.querySelector("#publish-status");
         if (!title || title.length > 100) {
           message.textContent = "Enter a title between 1 and 100 characters.";
@@ -1816,7 +1882,7 @@ if (sessionError || !sessionData.session) {
         const button = o.querySelector("#publish-confirm");
         button.disabled = true;
         try {
-          await publishCurrentCanvas(title);
+          await publishCurrentCanvas(title, collectionId);
           o.remove();
         } catch (error) {
           message.textContent = `Could not publish: ${error.message}`;
@@ -1825,6 +1891,8 @@ if (sessionError || !sessionData.session) {
       };
       o.querySelector("#unpublish")?.addEventListener("click", async () => {
         const button = o.querySelector("#unpublish");
+        const data = publicCanvas;
+        if (!data) return;
         button.disabled = true;
         const { error: updateError } = await supabase
           .from("clipcanva_public_canvases")
@@ -1851,6 +1919,8 @@ if (sessionError || !sessionData.session) {
           }
         }
         publicCanvas = { ...data, is_public: false };
+        publicationByCollection.delete(data.collection_id);
+        syncPublicationControls();
         o.remove();
         toast("Canvas unpublished");
       });
@@ -1862,7 +1932,7 @@ if (sessionError || !sessionData.session) {
     try {
       await ensureProfile();
       const o = modal(
-        `<h2>Team projects</h2><p>Private canvases shared only with invited members. Editors can change the canvas; viewers can only browse.</p><div class=row><input id=project-name maxlength=80 placeholder="New project name"><button class="btn p" id=project-create>Create project</button></div><p id=team-status role=status></p><h3>Your projects</h3><div id=project-list></div><h3>Invitations</h3><div id=invite-list></div><h3>Invite by username</h3><label>Project<select id=invite-project></select></label><div class=row><input id=invite-username maxlength=24 placeholder="username"><select id=invite-role><option value=editor>Editor</option><option value=viewer>Viewer</option></select><button class="btn p" id=invite-send>Invite</button></div><div class=row><button class=btn id=team-close>Done</button></div>`,
+        `<h2>Team projects</h2><p>Create a shared canvas. Public projects can be viewed by anyone; only invited members can edit. Private projects are invite-only.</p><div class=row><input id=project-name maxlength=80 placeholder="New project name"><select id=project-visibility aria-label="Project visibility"><option value=private>Private · invite-only</option><option value=public>Public · anyone can view</option></select><button class="btn p" id=project-create>Create project</button></div><p id=team-status role=status></p><h3>Your projects</h3><div id=project-list></div><h3>Invitations</h3><div id=invite-list></div><h3>Invite by username</h3><label>Project<select id=invite-project></select></label><div class=row><input id=invite-username maxlength=24 placeholder="username"><select id=invite-role><option value=editor>Editor</option><option value=viewer>Viewer</option></select><button class="btn p" id=invite-send>Invite</button></div><div class=row><button class=btn id=team-close>Done</button></div>`,
       );
       o.querySelector("#team-close").onclick = () => o.remove();
       const status = o.querySelector("#team-status");
@@ -1874,7 +1944,7 @@ if (sessionError || !sessionData.session) {
         ] = await Promise.all([
           supabase
             .from("clipcanva_projects")
-            .select("id,name,owner_id,updated_at")
+            .select("id,name,owner_id,updated_at,visibility")
             .order("updated_at", { ascending: false }),
           supabase
             .from("clipcanva_project_members")
@@ -1898,11 +1968,14 @@ if (sessionError || !sessionData.session) {
         const manageableProjects = (projects || []).filter((project) =>
           ["owner", "editor"].includes(roleByProject.get(project.id)),
         );
+        const memberProjects = (projects || []).filter((project) =>
+          roleByProject.has(project.id),
+        );
         o.querySelector("#project-list").innerHTML =
-          (projects || [])
+          memberProjects
             .map(
               (project) =>
-                `<button class=team-project data-project="${ea(project.id)}"><b>${e(project.name)}</b><small>${e(roleByProject.get(project.id) || "Member")}</small></button>`,
+                `<div class="team-project-row"><button class=team-project data-project="${ea(project.id)}"><b>${e(project.name)}</b><small>${e(roleByProject.get(project.id))} · ${project.visibility === "public" ? "Public" : "Private"}</small></button>${roleByProject.get(project.id) === "owner" ? `<button class=btn data-visibility="${ea(project.id)}" data-next-visibility="${project.visibility === "public" ? "private" : "public"}">${project.visibility === "public" ? "Make private" : "Make public"}</button>` : ""}${project.visibility === "public" ? `<button class=btn data-copy-project="${ea(project.id)}">Copy link</button>` : ""}</div>`,
             )
             .join("") || "<p class=muted>No team projects yet.</p>";
         o.querySelector("#invite-project").innerHTML = (projects || [])
@@ -1934,6 +2007,38 @@ if (sessionError || !sessionData.session) {
         o.querySelectorAll("[data-project]").forEach((button) => {
           button.onclick = () => {
             location.href = `index.html?project=${encodeURIComponent(button.dataset.project)}`;
+          };
+        });
+        o.querySelectorAll("[data-visibility]").forEach((button) => {
+          button.onclick = async () => {
+            button.disabled = true;
+            const { error } = await supabase.rpc(
+              "set_clipcanva_project_visibility",
+              {
+                target_project: button.dataset.visibility,
+                new_visibility: button.dataset.nextVisibility,
+              },
+            );
+            if (error) {
+              button.disabled = false;
+              status.textContent = `Could not change project visibility: ${error.message}`;
+              return;
+            }
+            await refresh();
+          };
+        });
+        o.querySelectorAll("[data-copy-project]").forEach((button) => {
+          button.onclick = async () => {
+            const shareUrl = new URL(
+              `canvas.html?project=${encodeURIComponent(button.dataset.copyProject)}`,
+              location.href,
+            ).href;
+            try {
+              await navigator.clipboard.writeText(shareUrl);
+              status.textContent = "Public project link copied.";
+            } catch (error) {
+              status.textContent = `Could not copy the link: ${error.message}`;
+            }
           };
         });
         o.querySelectorAll("[data-accept]").forEach((button) => {
@@ -1977,7 +2082,10 @@ if (sessionError || !sessionData.session) {
         button.disabled = true;
         const { data: projectId, error } = await supabase.rpc(
           "create_clipcanva_project",
-          { project_name: name },
+          {
+            project_name: name,
+            project_visibility: o.querySelector("#project-visibility").value,
+          },
         );
         if (error) {
           button.disabled = false;
@@ -2902,7 +3010,7 @@ if (sessionError || !sessionData.session) {
       activeProjectId = requestedProject;
       const { data: project, error: projectError } = await supabase
         .from("clipcanva_projects")
-        .select("id,name,owner_id,data,updated_at")
+        .select("id,name,owner_id,data,updated_at,visibility")
         .eq("id", activeProjectId)
         .maybeSingle();
       if (projectError) throw projectError;
@@ -2919,13 +3027,21 @@ if (sessionError || !sessionData.session) {
         .maybeSingle();
       if (memberError) throw memberError;
       projectRole =
-        membership?.role || (project.owner_id === SESSION.id ? "owner" : null);
+        membership?.role ||
+        (project.owner_id === SESSION.id
+          ? "owner"
+          : project.visibility === "public"
+            ? "viewer"
+            : null);
       if (!projectRole) {
         throw new Error("Your account is not a member of this project.");
       }
       projectName = project.name;
       projectUpdatedAt = project.updated_at;
-      $("#account-chip").textContent = `${project.name} · ${projectRole}`;
+      const publicVisitor = !membership && project.owner_id !== SESSION.id;
+      $("#account-chip").textContent = publicVisitor
+        ? `${project.name} · public view`
+        : `${project.name} · ${projectRole}`;
       $("#my-canvas").hidden = false;
       if (projectRole === "viewer") document.body.classList.add("readonly");
       S = await loadCloudWorkspace(project.data);

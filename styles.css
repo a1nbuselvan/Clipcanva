@@ -173,6 +173,12 @@ body.readonly #o {
 body.readonly .account-chip::after {
   content: " · view only";
 }
+.team-project-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
 .team-project,
 .invite-row {
   display: flex;

@@ -46,6 +46,17 @@
         Profiles show only a public username and display name. Email addresses
         and private canvases are never shown.
       </p>
+      <section id="profile-panel" class="profile-panel" hidden>
+        <div id="profile-social" class="profile-social"></div>
+        <section class="activity-panel" aria-label="Clipcanva activity">
+          <div class="activity-heading">
+            <h2>Activity</h2>
+            <span id="activity-total"></span>
+          </div>
+          <div id="activity-graph" class="activity-graph"></div>
+        </section>
+        <div id="relations" class="relations" hidden></div>
+      </section>
       <p id="status" role="status" aria-live="polite"></p>
       <section
         id="results"
