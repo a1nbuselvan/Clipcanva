@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clipcanva capture</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="mark" aria-hidden="true">C</div>
+        <div>
+          <h1>Clipcanva</h1>
+          <p>Save a reference from this tab</p>
+        </div>
+      </header>
+
+      <p class="notice">
+        Captures only when you click. The screenshot, page title, and website
+        origin stay in this browser until you download the bundle. Avoid private
+        or sensitive pages.
+      </p>
+
+      <button class="primary" id="capture" type="button">
+        Capture this tab
+      </button>
+      <p class="status" id="status" role="status" aria-live="polite">
+        OS screenshots and screenshots taken elsewhere cannot be detected.
+      </p>
+
+      <section aria-labelledby="queue-title">
+        <div class="section-heading">
+          <h2 id="queue-title">Capture queue</h2>
+          <span id="count">0 / 10</span>
+        </div>
+        <ul id="captures" aria-live="polite"></ul>
+        <button class="secondary" id="export" type="button" disabled>
+          Download import bundle
+        </button>
+        <button class="clear" id="clear" type="button" disabled>
+          Clear captures
+        </button>
+      </section>
+      <p class="footnote">
+        In Clipcanva, choose <b>Add → Import files</b> and select the downloaded
+        <code>.clipcanva.json</code> bundle.
+      </p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

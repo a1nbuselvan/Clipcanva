@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#070708" />
+    <meta
+      name="description"
+      content="Sign in to your private Clipcanva cloud workspace."
+    />
+    <title>Sign in — Clipcanva</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="auth.css" />
+    <script src="supabase-config.js"></script>
+    <script type="module" src="auth.js"></script>
+  </head>
+  <body>
+    <main class="auth-layout">
+      <section class="intro" aria-labelledby="brand-title">
+        <a class="brand" href="auth.html" aria-label="Clipcanva home">
+          <span class="brand-mark" aria-hidden="true">C</span>
+          <span id="brand-title">Clipcanva</span>
+        </a>
+
+        <div class="intro-copy">
+          <p class="eyebrow">YOUR VISUAL CLIPBOARD</p>
+          <h1>Good ideas deserve a place to land.</h1>
+          <p class="lede">
+            Gather screenshots, design references, code, and quick thoughts
+            together on one canvas made for the way creative work actually
+            happens.
+          </p>
+        </div>
+
+        <div class="preview-canvas" aria-hidden="true">
+          <article class="sample-card sample-image">
+            <div class="sample-top">REFERENCE <span>dribbble.com</span></div>
+            <div class="sample-art"></div>
+            <div class="sample-caption">A little inspiration, kept close.</div>
+          </article>
+          <article class="sample-card sample-code">
+            <div class="sample-top">CODE <span>snippet.js</span></div>
+            <pre><i>const</i> idea = <b>"yours"</b>;
+save(idea);</pre>
+          </article>
+          <div class="sample-connection"></div>
+          <div class="canvas-note">A canvas for your next big thing</div>
+        </div>
+
+        <footer class="intro-footer">
+          <span>Made for designers &amp; developers</span>
+          <span class="local-indicator"><i></i>Private cloud workspace</span>
+        </footer>
+      </section>
+
+      <section class="auth-side" aria-labelledby="form-title">
+        <div class="auth-card">
+          <div class="mobile-brand">
+            <span class="brand-mark" aria-hidden="true">C</span>
+            <span>Clipcanva</span>
+          </div>
+
+          <div class="form-heading">
+            <p class="eyebrow">YOUR CREATIVE SPACE</p>
+            <h2 id="form-title">Welcome back</h2>
+            <p id="form-description">
+              Log in to your Clipcanva cloud workspace.
+            </p>
+          </div>
+
+          <div class="mode-switch" role="group" aria-label="Choose an action">
+            <button
+              class="mode-button is-active"
+              id="login-mode"
+              type="button"
+              aria-pressed="true"
+            >
+              Log in
+            </button>
+            <button
+              class="mode-button"
+              id="signup-mode"
+              type="button"
+              aria-pressed="false"
+            >
+              Create account
+            </button>
+          </div>
+
+          <form id="auth-form" novalidate>
+            <label id="name-field" hidden>
+              Your name
+              <input
+                id="name"
+                name="name"
+                type="text"
+                autocomplete="name"
+                maxlength="60"
+                placeholder="Alex Morgan"
+              />
+            </label>
+
+            <label>
+              Email address
+              <input
+                id="email"
+                name="email"
+                type="email"
+                autocomplete="email"
+                maxlength="254"
+                placeholder="you@studio.com"
+                required
+              />
+            </label>
+
+            <label id="password-field">
+              Password
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                minlength="10"
+                maxlength="128"
+                placeholder="At least 10 characters"
+                required
+              />
+            </label>
+
+            <p class="form-error" id="form-error" role="alert" hidden></p>
+
+            <button class="continue-button" id="continue-button" type="submit">
+              Log in to Clipcanva
+            </button>
+            <button class="forgot-button" id="forgot-password" type="button">
+              Forgot password?
+            </button>
+          </form>
+
+          <div class="local-notice">
+            <span class="notice-icon" aria-hidden="true">i</span>
+            <p>
+              <strong>Your private cloud workspace.</strong> Sign in to save
+              your canvas and screenshots to your Clipcanva account.
+            </p>
+          </div>
+
+          <p class="privacy-note">
+            Screenshots are uploaded to your private Clipcanva workspace.
+            <a href="browser-extension/README.md">How capture works</a>
+          </p>
+        </div>
+        <p class="auth-footnote">A calmer home for everything you collect.</p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Clipcanva — Tab Capture",
+  "description": "Capture the current browser tab on demand and import it into Clipcanva with its source website.",
+  "version": "1.0.0",
+  "minimum_chrome_version": "102",
+  "permissions": ["activeTab", "downloads"],
+  "action": {
+    "default_title": "Capture a tab for Clipcanva",
+    "default_popup": "popup.html"
+  }
+}

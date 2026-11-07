@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Clipcanva — Visual Clipboard Workspace</title>
+    <meta
+      name="description"
+      content="Collect, arrange, and combine everything you copy in one visual workspace."
+    />
+    <meta name="theme-color" content="#050505" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="supabase-config.js"></script>
+  </head>
+  <body>
+    <nav id="rail" aria-label="Clipcanva workspace navigation"></nav>
+    <main id="main">
+      <div id="top">
+        <div class="brandline">
+          <strong>Clipcanva</strong>
+          <span>A visual clipboard for design &amp; development</span>
+          <span class="account-chip" id="account-chip"></span>
+          <button class="sign-out" data-a="logout" type="button">
+            Sign out
+          </button>
+        </div>
+        <div class="r1">
+          <label class="sr"
+            ><svg class="i" viewBox="0 0 24 24">
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" /></svg
+            ><input
+              id="q"
+              placeholder="Search text, code, links, tags…  ( / )"
+              autocomplete="off"
+          /></label>
+          <div class="grp">
+            <button class="b" data-a="undo" title="Undo (Ctrl+Z)">
+              __undo__</button
+            ><button class="b" data-a="redo" title="Redo (Ctrl+Shift+Z)">
+              __redo__
+            </button>
+          </div>
+          <div class="grp">
+            <button class="b" data-a="zo" title="Zoom out (-)">__minus__</button
+            ><span id="zl" class="zl">100%</span
+            ><button class="b" data-a="zi" title="Zoom in (+)">__plus__</button
+            ><button class="b" data-a="fit" title="Fit all (0)">__fit__</button>
+          </div>
+          <button class="b" data-a="cap" title="Clipboard capture">
+            __shield__
+          </button>
+          <button class="add" data-a="add">__plus__ Add</button>
+        </div>
+        <div class="pl" id="pl"></div>
+      </div>
+      <div id="stage">
+        <div id="vp">
+          <div id="w">
+            <div id="fr"></div>
+            <svg id="ln"></svg>
+            <div id="o"></div>
+          </div>
+          <div id="mq" hidden></div>
+        </div>
+        <div id="emp" hidden></div>
+        <aside class="pn" id="hist"></aside>
+        <aside class="pn" id="ins"></aside>
+        <div id="sb"></div>
+      </div>
+    </main>
+    <input
+      type="file"
+      id="fi"
+      accept="image/*,.clipcanva.json,application/json"
+      multiple
+      hidden
+    />
+    <div id="pv" hidden></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
